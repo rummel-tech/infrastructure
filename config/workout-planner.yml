@@ -1,0 +1,24 @@
+app:
+  name: workout-planner
+  repository: srummel/WorkoutPlanner
+
+backend:
+  port: 8000
+  dockerfile_path: applications/backend/python_fastapi_server/Dockerfile
+  working_directory: applications/backend/python_fastapi_server
+
+frontend:
+  framework: flutter
+  working_directory: applications/frontend/apps/mobile_app
+  base_path: /
+
+aws:
+  ecr_repository: workout-planner
+  ecs_service: workout-planner-service
+  ecs_cluster: app-cluster
+  container_name: workout-planner
+  region: us-east-1
+
+github:
+  pages_enabled: true
+  base_url: https://srummel.github.io/WorkoutPlanner/
