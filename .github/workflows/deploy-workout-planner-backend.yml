@@ -28,10 +28,10 @@ jobs:
       - name: Checkout infrastructure repo
         uses: actions/checkout@v4
 
-      - name: Checkout WorkoutPlanner repo
+      - name: Checkout workout-planner repo
         uses: actions/checkout@v4
         with:
-          repository: srummel/WorkoutPlanner
+          repository: srummel/workout-planner
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
           path: app-repo
 
