@@ -1,0 +1,40 @@
+# Example Terraform Variables for Workout Planner
+# Copy this file to terraform.tfvars and fill in your values
+
+# AWS Configuration
+aws_region  = "us-east-1"
+environment = "production"
+app_name    = "workout-planner"
+
+# Network Configuration
+vpc_id             = "vpc-xxxxx"  # Your VPC ID
+public_subnet_ids  = ["subnet-xxxxx", "subnet-yyyyy"]  # Public subnets in 2+ AZs
+private_subnet_ids = ["subnet-zzzzz", "subnet-aaaaa"]  # Private subnets in 2+ AZs
+
+# Domain & SSL
+domain_name     = "api.workout-planner.yourdomain.com"
+certificate_arn = "arn:aws:acm:us-east-1:901746942632:certificate/xxxxx"  # Leave empty to skip SSL initially
+
+# Alerting
+alert_email = "your-email@example.com"
+
+# Database Configuration
+db_instance_class          = "db.t3.micro"  # or db.t3.small for better performance
+db_allocated_storage       = 20
+db_multi_az                = true  # Set to false for dev/staging
+db_backup_retention_period = 7
+
+# ECS Configuration
+ecs_task_cpu      = 512   # 0.5 vCPU
+ecs_task_memory   = 1024  # 1 GB
+ecs_desired_count = 2
+ecs_min_capacity  = 2
+ecs_max_capacity  = 10
+
+# Tags
+tags = {
+  Application = "workout-planner"
+  Environment = "production"
+  ManagedBy   = "terraform"
+  Owner       = "devops-team"
+}
