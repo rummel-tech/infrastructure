@@ -1,0 +1,319 @@
+name: Security Scan - Workout Planner Backend
+
+on:
+  repository_dispatch:
+    types: [security-scan-workout-planner]
+  workflow_dispatch:
+    inputs:
+      repo_ref:
+        description: 'Repository ref to scan'
+        required: false
+        default: 'main'
+  schedule:
+    # Run security scans weekly on Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  push:
+    branches:
+      - main
+    paths:
+      - 'applications/backend/python_fastapi_server/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'applications/backend/python_fastapi_server/**'
+
+permissions:
+  contents: read
+  security-events: write  # For uploading SARIF results
+  pull-requests: write    # For commenting on PRs
+
+env:
+  PYTHON_VERSION: '3.14'
+  WORKING_DIR: 'applications/backend/python_fastapi_server'
+
+jobs:
+  bandit-scan:
+    name: Static Code Analysis (Bandit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout workout-planner repo
+        uses: actions/checkout@v4
+        with:
+          repository: srummel/workout-planner
+          ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
+          path: app-repo
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit security scan
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        run: |
+          bandit -r . \
+            -x ./.venv,./tests,./htmlcov,./node_modules,./.dep_update \
+            --skip B101 \
+            -f json \
+            -o bandit-report.json || true
+
+      - name: Generate Bandit summary
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        run: |
+          python << 'EOF'
+          import json
+          import os
+
+          with open('bandit-report.json', 'r') as f:
+              report = json.load(f)
+
+          results = report.get('results', [])
+          high = sum(1 for r in results if r.get('issue_severity') == 'HIGH')
+          medium = sum(1 for r in results if r.get('issue_severity') == 'MEDIUM')
+          low = sum(1 for r in results if r.get('issue_severity') == 'LOW')
+
+          print(f"🔍 Bandit Security Scan Results:")
+          print(f"  High:   {high}")
+          print(f"  Medium: {medium}")
+          print(f"  Low:    {low}")
+          print(f"  Total:  {len(results)}")
+
+          # Set GitHub output
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f"BANDIT_HIGH={high}\n")
+              env.write(f"BANDIT_MEDIUM={medium}\n")
+              env.write(f"BANDIT_LOW={low}\n")
+              env.write(f"BANDIT_TOTAL={len(results)}\n")
+
+          # Fail if high severity issues found
+          if high > 0:
+              print("❌ High severity issues found!")
+              exit(1)
+          else:
+              print("✅ No high severity issues found")
+          EOF
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: app-repo/${{ env.WORKING_DIR }}/bandit-report.json
+          retention-days: 90
+
+  dependency-scan:
+    name: Dependency Vulnerability Scan (Safety)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout workout-planner repo
+        uses: actions/checkout@v4
+        with:
+          repository: srummel/workout-planner
+          ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
+          path: app-repo
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies and Safety
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install safety
+
+      - name: Run Safety dependency scan
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        run: |
+          safety check --json --output safety-report.json || true
+
+      - name: Generate Safety summary
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        run: |
+          python << 'EOF'
+          import json
+          import os
+
+          with open('safety-report.json', 'r') as f:
+              report = json.load(f)
+
+          vulns = report.get('report_meta', {}).get('vulnerabilities_found', 0)
+
+          print(f"🔍 Safety Dependency Scan Results:")
+          print(f"  Vulnerabilities found: {vulns}")
+
+          # Set GitHub output
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f"SAFETY_VULNS={vulns}\n")
+
+          # Note: We don't fail on ecdsa vulnerabilities as documented in SECURITY_REPORT.md
+          # They are accepted risks with low actual impact
+          if vulns > 0:
+              print("⚠️  Known vulnerabilities found (see SECURITY_REPORT.md)")
+          else:
+              print("✅ No vulnerabilities found")
+          EOF
+
+      - name: Upload Safety report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: safety-report
+          path: app-repo/${{ env.WORKING_DIR }}/safety-report.json
+          retention-days: 90
+
+  security-summary:
+    name: Security Scan Summary
+    runs-on: ubuntu-latest
+    needs: [bandit-scan, dependency-scan]
+    if: always()
+
+    steps:
+      - name: Download Bandit report
+        uses: actions/download-artifact@v4
+        with:
+          name: bandit-report
+          path: reports/
+
+      - name: Download Safety report
+        uses: actions/download-artifact@v4
+        with:
+          name: safety-report
+          path: reports/
+
+      - name: Generate security summary
+        run: |
+          python << 'EOF'
+          import json
+
+          # Load reports
+          with open('reports/bandit-report.json', 'r') as f:
+              bandit = json.load(f)
+
+          with open('reports/safety-report.json', 'r') as f:
+              safety = json.load(f)
+
+          # Extract data
+          bandit_results = bandit.get('results', [])
+          bandit_high = sum(1 for r in bandit_results if r.get('issue_severity') == 'HIGH')
+          bandit_medium = sum(1 for r in bandit_results if r.get('issue_severity') == 'MEDIUM')
+          bandit_low = sum(1 for r in bandit_results if r.get('issue_severity') == 'LOW')
+
+          safety_vulns = safety.get('report_meta', {}).get('vulnerabilities_found', 0)
+
+          # Create summary
+          summary = f"""
+          # 🔒 Security Scan Summary
+
+          ## Static Code Analysis (Bandit)
+          - **High Severity**: {bandit_high}
+          - **Medium Severity**: {bandit_medium}
+          - **Low Severity**: {bandit_low}
+          - **Total Issues**: {len(bandit_results)}
+
+          ## Dependency Vulnerabilities (Safety)
+          - **Vulnerabilities Found**: {safety_vulns}
+
+          ---
+
+          {'✅ **Security scans passed**' if bandit_high == 0 else '❌ **High severity issues found**'}
+
+          > **Note**: Known vulnerabilities in `ecdsa` (transitive dependency) are documented in `SECURITY_REPORT.md` and accepted as low-risk. See report for details.
+
+          📄 Download detailed reports from the workflow artifacts.
+          """
+
+          print(summary)
+
+          # Save to file for PR comment
+          with open('security-summary.md', 'w') as f:
+              f.write(summary)
+          EOF
+
+      - name: Comment PR with security results
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+  container-scan:
+    name: Container Security Scan (Trivy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout workout-planner repo
+        uses: actions/checkout@v4
+        with:
+          repository: srummel/workout-planner
+          ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
+          path: app-repo
+
+      - name: Build Docker image
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        run: |
+          docker build -t workout-planner:scan .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'workout-planner:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Generate Trivy summary
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image \
+            --severity HIGH,CRITICAL \
+            --format json \
+            workout-planner:scan > trivy-report.json || true
+
+          python << 'EOF'
+          import json
+          try:
+              with open('trivy-report.json', 'r') as f:
+                  report = json.load(f)
+              results = report.get('Results', [])
+              vulns = sum(len(r.get('Vulnerabilities', [])) for r in results)
+              print(f"🐳 Container Security Scan Results:")
+              print(f"  Vulnerabilities (HIGH+CRITICAL): {vulns}")
+              if vulns > 0:
+                  print("⚠️  Container vulnerabilities found")
+              else:
+                  print("✅ No high/critical container vulnerabilities")
+          except Exception as e:
+              print(f"Could not parse Trivy report: {e}")
+          EOF
+
+      - name: Upload Trivy report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-report
+          path: trivy-report.json
+          retention-days: 30

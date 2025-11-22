@@ -38,7 +38,9 @@ infrastructure/
 │   ├── home-manager.yml
 │   └── vehicle-manager.yml
 ├── scripts/                    # Helper scripts
-│   └── trigger-deployment.sh
+│   ├── trigger-deployment.sh
+│   ├── get_ecs_public_ip.sh   # Get public IP of ECS task
+│   └── health_check.sh        # Health check utility
 └── README.md
 ```
 
