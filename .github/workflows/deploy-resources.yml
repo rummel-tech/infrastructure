@@ -1,0 +1,121 @@
+name: Deploy Resources
+
+on:
+  repository_dispatch:
+    types: [deploy-resources]
+  workflow_dispatch:
+    inputs:
+      repo_ref:
+        description: 'Repository ref to deploy'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages-resources"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout infrastructure repo
+        uses: actions/checkout@v4
+
+      - name: Checkout resources repo
+        uses: actions/checkout@v4
+        with:
+          repository: srummel/resources
+          ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
+          path: resources-repo
+
+      - name: Prepare static assets for deployment
+        run: |
+          mkdir -p deploy
+
+          # Copy static assets
+          cp -r resources-repo/assets deploy/
+          cp -r resources-repo/design-system deploy/
+
+          # Create index.html for browsing
+          cat > deploy/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Rummel Resources</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+              h1 { color: #2196F3; }
+              a { color: #2196F3; text-decoration: none; }
+              a:hover { text-decoration: underline; }
+              .section { margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 8px; }
+            </style>
+          </head>
+          <body>
+            <h1>Rummel Resources</h1>
+            <p>Shared design system and assets for Rummel applications.</p>
+
+            <div class="section">
+              <h2>Assets</h2>
+              <ul>
+                <li><a href="./assets/logos/">Logos</a></li>
+                <li><a href="./assets/icons/">Icons</a></li>
+                <li><a href="./assets/images/">Images</a></li>
+                <li><a href="./assets/fonts/">Fonts</a></li>
+              </ul>
+            </div>
+
+            <div class="section">
+              <h2>Design System</h2>
+              <ul>
+                <li><a href="./design-system/colors/">Colors</a></li>
+                <li><a href="./design-system/">All specifications</a></li>
+              </ul>
+            </div>
+
+            <div class="section">
+              <h2>Flutter Packages</h2>
+              <p>Use as git dependency in pubspec.yaml:</p>
+              <pre>
+rummel_blue_theme:
+  git:
+    url: git@github.com:srummel/resources.git
+    path: rummel_blue_theme</pre>
+            </div>
+          </body>
+          </html>
+          EOF
+
+          echo "Contents of deploy directory:"
+          ls -la deploy/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload to GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: deploy
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Deployment success
+        run: |
+          echo "✅ Resources deployed successfully!"
+          echo "🌐 URL: ${{ steps.deployment.outputs.page_url }}"
+          echo ""
+          echo "Asset URLs:"
+          echo "  - ${{ steps.deployment.outputs.page_url }}assets/logos/"
+          echo "  - ${{ steps.deployment.outputs.page_url }}assets/icons/"
+          echo "  - ${{ steps.deployment.outputs.page_url }}design-system/"
