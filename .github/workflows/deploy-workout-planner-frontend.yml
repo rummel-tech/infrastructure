@@ -9,11 +9,19 @@ on:
         description: 'Repository ref to deploy'
         required: false
         default: 'main'
+      api_url:
+        description: 'Production API URL (leave empty to use default)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
   pages: write
   id-token: write
+
+env:
+  # Default production API URL - update when ECS service is deployed
+  PRODUCTION_API_URL: ${{ github.event.inputs.api_url || secrets.PRODUCTION_API_URL || 'https://api.workout-planner.rummel.tech' }}
 
 jobs:
   build-and-deploy:
@@ -40,16 +48,20 @@ jobs:
         run: flutter config --enable-web
 
       - name: Build Workout Planner web
-        working-directory: app-repo/applications/frontend/apps/mobile_app
+        working-directory: app-repo
         run: |
+          echo "Building with API URL: $PRODUCTION_API_URL"
           flutter pub get
-          flutter build web --release
+          flutter build web --release \
+            --base-href /workout-planner/ \
+            --dart-define=PRODUCTION_API_URL=$PRODUCTION_API_URL \
+            --dart-define=WEB_API_URL=$PRODUCTION_API_URL
           cp build/web/index.html build/web/404.html
 
       - name: Upload to GitHub Pages
         uses: actions/upload-pages-artifact@v3
         with:
-          path: app-repo/applications/frontend/apps/mobile_app/build/web
+          path: app-repo/build/web
 
       - name: Deploy to GitHub Pages
         id: deployment
@@ -57,5 +69,9 @@ jobs:
 
       - name: Deployment success
         run: |
-          echo "✅ Workout Planner frontend deployed successfully!"
-          echo "🌐 URL: ${{ steps.deployment.outputs.page_url }}"
+          echo "============================================================"
+          echo "  WORKOUT PLANNER FRONTEND DEPLOYED SUCCESSFULLY"
+          echo "============================================================"
+          echo ""
+          echo "Frontend URL: ${{ steps.deployment.outputs.page_url }}"
+          echo "API URL: $PRODUCTION_API_URL"

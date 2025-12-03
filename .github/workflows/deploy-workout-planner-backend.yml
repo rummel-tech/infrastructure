@@ -28,12 +28,12 @@ jobs:
       - name: Checkout infrastructure repo
         uses: actions/checkout@v4
 
-      - name: Checkout workout-planner repo
+      - name: Checkout services repo
         uses: actions/checkout@v4
         with:
-          repository: srummel/workout-planner
+          repository: rummel-tech/services
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
-          path: app-repo
+          path: services-repo
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -51,12 +51,14 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build Docker image
-        working-directory: app-repo/applications/backend/python_fastapi_server
+        working-directory: services-repo
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          # Build using the Dockerfile at the services repo root
+          # which expects common/ and workout-planner/ directories
+          docker build -f workout-planner/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
       - name: Push image to Amazon ECR
@@ -101,7 +103,7 @@ jobs:
             --output text 2>/dev/null || echo "")
 
           if [ "$SERVICE_EXISTS" == "ACTIVE" ]; then
-            echo "📦 Service exists, updating..."
+            echo "Service exists, updating..."
             aws ecs update-service \
               --cluster $ECS_CLUSTER \
               --service $ECS_SERVICE \
@@ -109,13 +111,13 @@ jobs:
               --force-new-deployment \
               --region $AWS_REGION
 
-            echo "⏳ Waiting for service to stabilize..."
+            echo "Waiting for service to stabilize..."
             aws ecs wait services-stable \
               --cluster $ECS_CLUSTER \
               --services $ECS_SERVICE \
               --region $AWS_REGION
           else
-            echo "⚠️ ECS service does not exist yet."
+            echo "ECS service does not exist yet."
             echo "Run the create-ecs-service.sh script to create it first."
             echo "Then re-run this deployment."
             exit 1
@@ -123,16 +125,16 @@ jobs:
 
       - name: Deployment Success
         run: |
-          echo "╔════════════════════════════════════════════════════════════════╗"
-          echo "║        ✅ WORKOUT PLANNER BACKEND DEPLOYED SUCCESSFULLY         ║"
-          echo "╚════════════════════════════════════════════════════════════════╝"
+          echo "============================================================"
+          echo "  WORKOUT PLANNER BACKEND DEPLOYED SUCCESSFULLY"
+          echo "============================================================"
           echo ""
-          echo "📦 Image: ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}"
-          echo "🎯 Service: $ECS_SERVICE"
-          echo "📊 Cluster: $ECS_CLUSTER"
+          echo "Image: ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}"
+          echo "Service: $ECS_SERVICE"
+          echo "Cluster: $ECS_CLUSTER"
           echo ""
-          echo "📝 View logs:"
+          echo "View logs:"
           echo "   aws logs tail /ecs/workout-planner --follow --region $AWS_REGION"
           echo ""
-          echo "🔍 Check service status:"
+          echo "Check service status:"
           echo "   aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION"
