@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: rummel-tech/services
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
           path: services-repo
 
