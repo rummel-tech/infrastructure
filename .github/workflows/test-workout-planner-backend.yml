@@ -37,7 +37,7 @@ jobs:
       - name: Checkout workout-planner repo
         uses: actions/checkout@v4
         with:
-          repository: srummel/workout-planner
+          repository: rummel-tech/workout-planner
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
           path: app-repo
 
@@ -148,7 +148,7 @@ jobs:
       - name: Checkout workout-planner repo
         uses: actions/checkout@v4
         with:
-          repository: srummel/workout-planner
+          repository: rummel-tech/workout-planner
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
           path: app-repo
 
@@ -197,7 +197,7 @@ jobs:
       - name: Checkout workout-planner repo
         uses: actions/checkout@v4
         with:
-          repository: srummel/workout-planner
+          repository: rummel-tech/workout-planner
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
           path: app-repo
 

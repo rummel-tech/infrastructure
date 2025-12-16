@@ -75,13 +75,13 @@ Creates ECS Fargate service for workout-planner backend.
    ./setup-oidc-role.sh
 
    # Add the output ARN to GitHub secrets:
-   gh secret set AWS_ROLE_TO_ASSUME --body "arn:aws:iam::ACCOUNT:role/..." --repo srummel/infrastructure
+   gh secret set AWS_ROLE_TO_ASSUME --body "arn:aws:iam::ACCOUNT:role/..." --repo rummel-tech/infrastructure
    ```
 
 2. **Deploy Backend** (first time):
    ```bash
    # Build and push image
-   gh workflow run deploy-workout-planner-backend.yml --repo srummel/infrastructure
+   gh workflow run deploy-workout-planner-backend.yml --repo rummel-tech/infrastructure
 
    # Wait for workflow to complete, then create service
    ./create-ecs-service.sh
@@ -89,14 +89,14 @@ Creates ECS Fargate service for workout-planner backend.
 
 3. **Deploy Frontend**:
    ```bash
-   gh workflow run deploy-workout-planner-frontend.yml --repo srummel/infrastructure
+   gh workflow run deploy-workout-planner-frontend.yml --repo rummel-tech/infrastructure
    ```
 
 4. **Subsequent Updates**:
    ```bash
    # Just run the workflows - service already exists
-   gh workflow run deploy-workout-planner-backend.yml --repo srummel/infrastructure
-   gh workflow run deploy-workout-planner-frontend.yml --repo srummel/infrastructure
+   gh workflow run deploy-workout-planner-backend.yml --repo rummel-tech/infrastructure
+   gh workflow run deploy-workout-planner-frontend.yml --repo rummel-tech/infrastructure
    ```
 
 ## Troubleshooting

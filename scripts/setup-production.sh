@@ -232,7 +232,7 @@ else
                 },
                 "StringLike": {
                     "token.actions.githubusercontent.com:sub": [
-                        "repo:srummel/infrastructure:*",
+                        "repo:rummel-tech/infrastructure:*",
                         "repo:rummel-tech/services:*"
                     ]
                 }
@@ -270,12 +270,12 @@ echo "  - ECR Repository: $ECR_URI"
 echo "  - CloudWatch Log Group: /ecs/$APP_NAME"
 echo "  - Secrets: $APP_NAME/jwt-secret, $APP_NAME/database-url"
 echo "  - IAM Roles: ecsTaskExecutionRole, ecsTaskRole"
-echo "  - GitHub OIDC: Configured for srummel/infrastructure"
+echo "  - GitHub OIDC: Configured for rummel-tech/infrastructure"
 echo ""
 echo "Next Steps:"
 echo ""
 echo "1. Set the GitHub secret in the infrastructure repo:"
-echo "   gh secret set AWS_ROLE_TO_ASSUME -b '$GH_ROLE_ARN' -R srummel/infrastructure"
+echo "   gh secret set AWS_ROLE_TO_ASSUME -b '$GH_ROLE_ARN' -R rummel-tech/infrastructure"
 echo ""
 echo "2. If using RDS, update the database URL secret:"
 echo "   aws secretsmanager update-secret \\"
@@ -294,5 +294,5 @@ echo "   cd /home/shawn/APP_DEV/infrastructure/scripts"
 echo "   ./create-ecs-service.sh"
 echo ""
 echo "5. Or trigger deployment via GitHub Actions:"
-echo "   gh workflow run deploy-workout-planner-backend.yml -R srummel/infrastructure"
+echo "   gh workflow run deploy-workout-planner-backend.yml -R rummel-tech/infrastructure"
 echo ""

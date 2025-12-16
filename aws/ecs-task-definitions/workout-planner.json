@@ -32,7 +32,7 @@
         },
         {
           "name": "CORS_ORIGINS",
-          "value": "https://srummel.github.io,https://workout-planner.rummel.tech"
+          "value": "https://rummel-tech.github.io,https://workout-planner.rummel.tech"
         },
         {
           "name": "REDIS_ENABLED",

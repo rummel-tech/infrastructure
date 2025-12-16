@@ -7,7 +7,7 @@
 set -e
 
 AWS_REGION="us-east-1"
-GITHUB_ORG="srummel"
+GITHUB_ORG="rummel-tech"
 GITHUB_REPO="infrastructure"
 ROLE_NAME="GitHubActionsDeploymentRole"
 

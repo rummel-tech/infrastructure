@@ -24,8 +24,8 @@ echo "   Ref: $REF"
 
 # This would be run from the app repository to trigger the infrastructure repo workflow
 gh workflow run "deploy-${APP_NAME}-${DEPLOY_TYPE}.yml" \
-  --repo srummel/infrastructure \
+  --repo rummel-tech/infrastructure \
   --field repo_ref=$REF
 
 echo "✅ Deployment triggered successfully!"
-echo "   View workflow: https://github.com/srummel/infrastructure/actions"
+echo "   View workflow: https://github.com/rummel-tech/infrastructure/actions"

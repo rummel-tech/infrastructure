@@ -90,14 +90,14 @@ From the GitHub Actions UI in this repository:
 
 ```bash
 # Deploy frontend
-gh workflow run deploy-workout-planner-frontend.yml --repo srummel/infrastructure
+gh workflow run deploy-workout-planner-frontend.yml --repo rummel-tech/infrastructure
 
 # Deploy backend
-gh workflow run deploy-meal-planner-backend.yml --repo srummel/infrastructure
+gh workflow run deploy-meal-planner-backend.yml --repo rummel-tech/infrastructure
 
 # Deploy specific ref
 gh workflow run deploy-home-manager-frontend.yml \
-  --repo srummel/infrastructure \
+  --repo rummel-tech/infrastructure \
   --field repo_ref=feature-branch
 ```
 
@@ -110,7 +110,7 @@ From an application repository:
 curl -X POST \
   -H "Accept: application/vnd.github.v3+json" \
   -H "Authorization: token $GITHUB_TOKEN" \
-  https://api.github.com/repos/srummel/infrastructure/dispatches \
+  https://api.github.com/repos/rummel-tech/infrastructure/dispatches \
   -d '{"event_type":"deploy-workout-planner-frontend","client_payload":{"ref":"main"}}'
 ```
 
@@ -160,7 +160,7 @@ Each application has a configuration file in `config/`:
 ```yaml
 app:
   name: workout-planner
-  repository: srummel/WorkoutPlanner
+  repository: rummel-tech/WorkoutPlanner
 
 backend:
   port: 8000
@@ -181,7 +181,7 @@ aws:
 
 github:
   pages_enabled: true
-  base_url: https://srummel.github.io/WorkoutPlanner/
+  base_url: https://rummel-tech.github.io/WorkoutPlanner/
 ```
 
 ## AWS Resources
@@ -248,7 +248,7 @@ Each application can have an ECS service (optional):
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:srummel/infrastructure:*"
+          "token.actions.githubusercontent.com:sub": "repo:rummel-tech/infrastructure:*"
         }
       }
     }
@@ -264,10 +264,10 @@ Each application can have an ECS service (optional):
 
 ### Frontend (GitHub Pages)
 
-- **Workout Planner**: https://srummel.github.io/WorkoutPlanner/
-- **Meal Planner**: https://srummel.github.io/meal-planner/
-- **Home Manager**: https://srummel.github.io/home-manager/
-- **Vehicle Manager**: https://srummel.github.io/vehicle-manager/
+- **Workout Planner**: https://rummel-tech.github.io/WorkoutPlanner/
+- **Meal Planner**: https://rummel-tech.github.io/meal-planner/
+- **Home Manager**: https://rummel-tech.github.io/home-manager/
+- **Vehicle Manager**: https://rummel-tech.github.io/vehicle-manager/
 
 ### Backend (AWS ECS)
 

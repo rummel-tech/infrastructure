@@ -31,7 +31,7 @@ jobs:
       - name: Checkout vehicle-manager repo
         uses: actions/checkout@v4
         with:
-          repository: srummel/vehicle-manager
+          repository: rummel-tech/vehicle-manager
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
           path: app-repo
 

@@ -32,7 +32,7 @@ jobs:
       - name: Checkout resources repo
         uses: actions/checkout@v4
         with:
-          repository: srummel/resources
+          repository: rummel-tech/resources
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
           path: resources-repo
 
@@ -88,7 +88,7 @@ jobs:
               <pre>
 rummel_blue_theme:
   git:
-    url: git@github.com:srummel/resources.git
+    url: git@github.com:rummel-tech/resources.git
     path: rummel_blue_theme</pre>
             </div>
           </body>

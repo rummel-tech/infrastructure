@@ -1,6 +1,6 @@
 app:
   name: vehicle-manager
-  repository: srummel/vehicle-manager
+  repository: rummel-tech/vehicle-manager
 
 backend:
   port: 8030
@@ -21,4 +21,4 @@ aws:
 
 github:
   pages_enabled: true
-  base_url: https://srummel.github.io/vehicle-manager/
+  base_url: https://rummel-tech.github.io/vehicle-manager/

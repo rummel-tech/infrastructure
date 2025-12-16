@@ -1,6 +1,6 @@
 app:
   name: workout-planner
-  repository: srummel/workout-planner
+  repository: rummel-tech/workout-planner
 
 backend:
   port: 8000
@@ -21,4 +21,4 @@ aws:
 
 github:
   pages_enabled: true
-  base_url: https://srummel.github.io/workout-planner/
+  base_url: https://rummel-tech.github.io/workout-planner/

@@ -1,6 +1,6 @@
 app:
   name: meal-planner
-  repository: srummel/meal-planner
+  repository: rummel-tech/meal-planner
 
 backend:
   port: 8010
@@ -21,4 +21,4 @@ aws:
 
 github:
   pages_enabled: true
-  base_url: https://srummel.github.io/meal-planner/
+  base_url: https://rummel-tech.github.io/meal-planner/
