@@ -48,6 +48,10 @@ jobs:
       - name: Enable Flutter web
         run: flutter config --enable-web
 
+      - name: Configure git for private dependencies
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Build Workout Planner web
         working-directory: app-repo
         run: |
