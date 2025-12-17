@@ -16,8 +16,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 env:
   # Default production API URL - update when ECS service is deployed
@@ -63,14 +61,15 @@ jobs:
             --dart-define=WEB_API_URL=$PRODUCTION_API_URL
           cp build/web/index.html build/web/404.html
 
-      - name: Upload to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: app-repo/build/web
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Deploy to workout-planner GitHub Pages
+        run: |
+          cd app-repo/build/web
+          git init
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add -A
+          git commit -m "Deploy frontend from infrastructure workflow"
+          git push -f https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/rummel-tech/workout-planner.git HEAD:gh-pages
 
       - name: Deployment success
         run: |
@@ -78,5 +77,5 @@ jobs:
           echo "  WORKOUT PLANNER FRONTEND DEPLOYED SUCCESSFULLY"
           echo "============================================================"
           echo ""
-          echo "Frontend URL: ${{ steps.deployment.outputs.page_url }}"
+          echo "Frontend URL: https://rummel-tech.github.io/workout-planner/"
           echo "API URL: $PRODUCTION_API_URL"
