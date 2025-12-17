@@ -106,6 +106,19 @@ variable "ecs_max_capacity" {
   default     = 10
 }
 
+# Frontend Configuration
+variable "frontend_domain_name" {
+  description = "Custom domain name for frontend (optional, leave empty for CloudFront default)"
+  type        = string
+  default     = ""
+}
+
+variable "frontend_certificate_arn" {
+  description = "ARN of ACM certificate for frontend custom domain (must be in us-east-1)"
+  type        = string
+  default     = ""
+}
+
 # Tags
 variable "tags" {
   description = "Common tags for all resources"

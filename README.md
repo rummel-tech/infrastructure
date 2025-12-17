@@ -1,48 +1,79 @@
 # Infrastructure
 
-Centralized deployment and infrastructure management for all applications.
+Centralized deployment and infrastructure management for Rummel Tech applications.
 
-## Overview
+## Architecture Overview
 
-This repository contains all CI/CD pipelines, deployment configurations, and infrastructure as code for the following applications:
+This repository contains all CI/CD pipelines, deployment configurations, and infrastructure as code (IaC). It does **not** contain application code - only the infrastructure that deploys and manages applications.
 
-- **Workout Planner** - Fitness and workout tracking
-- **Meal Planner** - Weekly meal planning and nutrition
-- **Home Manager** - Task and goal management
-- **Vehicle Manager** - Vehicle maintenance and fuel tracking
+### System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Rummel Tech Platform                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────┐         ┌─────────────────────────────────────┐   │
+│  │   workout-planner   │         │              services                │   │
+│  │   (Flutter Web)     │         │        (Python/FastAPI)              │   │
+│  └──────────┬──────────┘         └──────────────────┬──────────────────┘   │
+│             │                                        │                      │
+│             ▼                                        ▼                      │
+│  ┌─────────────────────┐         ┌─────────────────────────────────────┐   │
+│  │   S3 + CloudFront   │         │            ECS Fargate               │   │
+│  │   (Static Hosting)  │────────▶│          (API Backend)               │   │
+│  └─────────────────────┘         └──────────────────┬──────────────────┘   │
+│                                                      │                      │
+│                                                      ▼                      │
+│                                  ┌─────────────────────────────────────┐   │
+│                                  │             RDS Postgres             │   │
+│                                  └─────────────────────────────────────┘   │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                           infrastructure (this repo)                        │
+│                    CI/CD Pipelines | Terraform | ECS Task Defs              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Repository Relationships
+
+| Repository | Purpose | Deployed To |
+|------------|---------|-------------|
+| `workout-planner` | Flutter web application | S3 + CloudFront |
+| `services` | Python/FastAPI backend APIs | ECS Fargate |
+| `infrastructure` | CI/CD, IaC, deployment configs | N/A (deploys other repos) |
 
 ## Repository Structure
 
 ```
 infrastructure/
 ├── .github/
-│   └── workflows/              # Centralized GitHub Actions workflows
-│       ├── deploy-workout-planner-frontend.yml
-│       ├── deploy-workout-planner-backend.yml
-│       ├── deploy-meal-planner-frontend.yml
-│       ├── deploy-meal-planner-backend.yml
-│       ├── deploy-home-manager-frontend.yml
-│       ├── deploy-home-manager-backend.yml
-│       ├── deploy-vehicle-manager-frontend.yml
-│       └── deploy-vehicle-manager-backend.yml
+│   └── workflows/              # GitHub Actions CI/CD pipelines
+│       ├── deploy-workout-planner-frontend.yml  # Deploys to S3/CloudFront
+│       ├── deploy-workout-planner-backend.yml   # Deploys to ECS
+│       └── ...
 ├── aws/
-│   ├── ecs-task-definitions/   # ECS task definitions for each app
-│   │   ├── workout-planner.json
-│   │   ├── meal-planner.json
-│   │   ├── home-manager.json
-│   │   └── vehicle-manager.json
-│   └── setup-aws-infrastructure.sh
+│   └── ecs-task-definitions/   # ECS task definitions
+│       └── workout-planner.json
+├── terraform/                  # Infrastructure as Code
+│   ├── frontend.tf             # S3 + CloudFront for static sites
+│   ├── rds.tf                  # Database infrastructure
+│   ├── alb.tf                  # Load balancer
+│   └── ...
 ├── config/                     # Application configurations
-│   ├── workout-planner.yml
-│   ├── meal-planner.yml
-│   ├── home-manager.yml
-│   └── vehicle-manager.yml
 ├── scripts/                    # Helper scripts
-│   ├── trigger-deployment.sh
-│   ├── get_ecs_public_ip.sh   # Get public IP of ECS task
-│   └── health_check.sh        # Health check utility
 └── README.md
 ```
+
+## Current Infrastructure
+
+### Workout Planner
+
+| Component | Resource | URL/Endpoint |
+|-----------|----------|--------------|
+| Frontend | S3 + CloudFront | https://d2cherv0x5cnu6.cloudfront.net |
+| Backend API | ECS Fargate | Dynamic IP (use `get_ecs_public_ip.sh`) |
+| Database | RDS PostgreSQL | `fitness-agent-dev.*.rds.amazonaws.com` |
 
 ## Prerequisites
 
