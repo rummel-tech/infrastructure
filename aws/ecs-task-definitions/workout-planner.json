@@ -42,11 +42,11 @@
       "secrets": [
         {
           "name": "DATABASE_URL",
-          "valueFrom": "arn:aws:secretsmanager:us-east-1:{ACCOUNT_ID}:secret:workout-planner/database-url"
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:{ACCOUNT_ID}:secret:fitness-agent/dev/database_url"
         },
         {
           "name": "JWT_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:us-east-1:{ACCOUNT_ID}:secret:workout-planner/jwt-secret"
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:{ACCOUNT_ID}:secret:fitness-agent/dev/jwt_secret"
         }
       ],
       "logConfiguration": {
