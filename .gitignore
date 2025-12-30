@@ -23,6 +23,9 @@ credentials
 .DS_Store
 Thumbs.db
 
+# Meta/process documentation
+.meta/
+
 # Logs
 *.log
 logs/

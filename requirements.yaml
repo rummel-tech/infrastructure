@@ -1,0 +1,478 @@
+# Infrastructure - Requirements & Specifications
+# Source of truth for AWS infrastructure and CI/CD
+
+metadata:
+  name: infrastructure
+  description: "Centralized deployment and infrastructure management for Rummel Tech applications"
+  owner: Rummel Tech
+  repository: infrastructure/
+  purpose: "CI/CD pipelines, Infrastructure as Code, deployment configurations"
+
+architecture:
+  pattern: Multi-tier cloud architecture
+  principle: Infrastructure as Code (IaC)
+  deployment_strategy: Blue/Green with GitHub Actions
+
+  components:
+    frontend:
+      description: Static web hosting
+      service: AWS S3 + CloudFront
+      deployed_apps:
+      - workout-planner Flutter web
+
+    backend:
+      description: Container orchestration
+      service: AWS ECS Fargate
+      deployed_services:
+      - workout-planner API (port 8000)
+      - meal-planner API (port 8010) [planned]
+      - home-manager API (port 8020) [planned]
+      - vehicle-manager API (port 8030) [planned]
+
+    database:
+      description: Managed relational database
+      service: AWS RDS PostgreSQL 14+
+      instances:
+      - fitness-agent-dev (shared dev/staging)
+      - fitness-agent-prod (production) [planned]
+
+    load_balancer:
+      description: Application load balancer
+      service: AWS ALB
+      purpose: Route traffic to ECS services
+
+    caching:
+      description: In-memory cache
+      service: AWS ElastiCache Redis [planned]
+      purpose: Session storage, API caching
+
+    secrets:
+      description: Secrets management
+      service: AWS Secrets Manager
+      stored_secrets:
+      - Database credentials
+      - JWT signing keys
+      - API keys (OpenAI, etc.)
+
+    monitoring:
+      description: Logging and metrics
+      services:
+      - AWS CloudWatch Logs
+      - AWS CloudWatch Metrics
+      - Prometheus (self-hosted) [planned]
+
+terraform_modules:
+  provider:
+    file: terraform/provider.tf
+    provider: AWS
+    region: us-east-1 (configurable)
+    backend: S3 (for state storage)
+
+  frontend:
+    file: terraform/frontend.tf
+    resources:
+    - AWS S3 Bucket (static hosting)
+    - CloudFront Distribution
+    - Route53 DNS (planned)
+    - ACM Certificate (planned)
+    purpose: Host Flutter web apps
+
+  rds:
+    file: terraform/rds.tf
+    resources:
+    - RDS PostgreSQL instance
+    - Security groups
+    - Subnet groups
+    - Parameter groups
+    purpose: Managed database for services
+
+  alb:
+    file: terraform/alb.tf
+    resources:
+    - Application Load Balancer
+    - Target groups
+    - Listener rules
+    - Security groups
+    purpose: Route HTTP/HTTPS traffic to ECS
+
+  autoscaling:
+    file: terraform/autoscaling.tf
+    resources:
+    - ECS Service autoscaling
+    - Target tracking policies
+    - CloudWatch alarms
+    purpose: Scale services based on load
+
+  cloudwatch:
+    file: terraform/cloudwatch.tf
+    resources:
+    - Log groups
+    - Metric alarms
+    - Dashboards
+    purpose: Monitoring and alerting
+
+  backup:
+    file: terraform/backup.tf
+    resources:
+    - RDS automated backups
+    - Backup plans
+    - Retention policies
+    purpose: Data backup and recovery
+
+  variables:
+    file: terraform/variables.tf
+    configurable:
+    - AWS region
+    - Environment (dev/staging/prod)
+    - Instance sizes
+    - Scaling parameters
+    - Domain names
+
+ecs_task_definitions:
+  location: aws/ecs-task-definitions/
+  format: JSON
+
+  workout_planner:
+    file: workout-planner.json
+    configuration:
+      container_name: workout-planner-api
+      image: "AWS ECR repository"
+      cpu: 512
+      memory: 1024
+      port_mappings:
+      - 8000:8000
+      environment:
+      - ENVIRONMENT
+      - LOG_LEVEL
+      secrets:
+      - DATABASE_URL (from Secrets Manager)
+      - JWT_SECRET (from Secrets Manager)
+      - OPENAI_API_KEY (from Secrets Manager)
+      health_check:
+        command: "CMD-SHELL, curl -f http://localhost:8000/health || exit 1"
+        interval: 30
+        timeout: 5
+        retries: 3
+      logging:
+        driver: awslogs
+        options:
+          awslogs-group: /ecs/workout-planner
+          awslogs-region: us-east-1
+          awslogs-stream-prefix: ecs
+
+cicd_pipelines:
+  provider: GitHub Actions
+  location: .github/workflows/
+
+  deploy_frontend:
+    file: deploy-workout-planner-frontend.yml
+    trigger:
+    - push to main branch (workout-planner repo)
+    - manual workflow dispatch
+    steps:
+    - Checkout code
+    - Setup Flutter
+    - Build web app (flutter build web)
+    - Deploy to S3
+    - Invalidate CloudFront cache
+    secrets_required:
+    - AWS_ROLE_TO_ASSUME
+    permissions: OIDC authentication
+
+  deploy_backend:
+    file: deploy-workout-planner-backend.yml
+    trigger:
+    - push to main branch (services repo)
+    - manual workflow dispatch
+    steps:
+    - Checkout code
+    - Login to AWS ECR
+    - Build Docker image
+    - Push to ECR
+    - Update ECS task definition
+    - Deploy to ECS
+    - Wait for service stability
+    - Run smoke tests
+    secrets_required:
+    - AWS_ROLE_TO_ASSUME
+    environment_variables:
+    - AWS_REGION
+    - ECS_CLUSTER
+    - ECS_SERVICE
+    - ECR_REPOSITORY
+    rollback: Automatic on health check failure
+
+deployment_scripts:
+  location: scripts/
+
+  create_ecs_service:
+    file: create-ecs-service.sh
+    purpose: Create new ECS service
+    usage: "./create-ecs-service.sh [service-name]"
+
+  get_ecs_public_ip:
+    file: get_ecs_public_ip.sh
+    purpose: Get public IP of running ECS task
+    usage: "./get_ecs_public_ip.sh [service-name]"
+
+  health_check:
+    file: health_check.sh
+    purpose: Check health of deployed service
+    usage: "./health_check.sh [service-url]"
+
+  setup_oidc_role:
+    file: setup-oidc-role.sh
+    purpose: Configure GitHub OIDC for AWS
+    usage: "./setup-oidc-role.sh"
+
+  setup_production:
+    file: setup-production.sh
+    purpose: Initial production environment setup
+    usage: "./setup-production.sh"
+
+  trigger_deployment:
+    file: trigger-deployment.sh
+    purpose: Manually trigger deployment
+    usage: "./trigger-deployment.sh [environment]"
+
+configuration_files:
+  location: config/
+
+  application_configs:
+  - home-manager.yml
+  - meal-planner.yml
+  - vehicle-manager.yml
+  - workout-planner.yml
+
+  purpose: Environment-specific application settings
+  format: YAML
+  contains:
+  - Database connection strings
+  - API endpoints
+  - Feature flags
+  - Service-specific parameters
+
+aws_resources:
+  compute:
+    ecs_cluster:
+      name: app-cluster
+      type: Fargate
+      services:
+      - workout-planner-service
+      tasks:
+        cpu: 512 (0.5 vCPU)
+        memory: 1024 MB
+
+  storage:
+    s3_buckets:
+    - workout-planner-web (static hosting)
+    - terraform-state (backend state)
+    - backups (database backups)
+
+    rds:
+      engine: PostgreSQL 14
+      instance_class: db.t3.micro (dev), db.t3.small (prod)
+      storage: 20 GB (auto-scaling enabled)
+      multi_az: false (dev), true (prod)
+      backup_retention: 7 days
+
+  networking:
+    vpc:
+      cidr: 10.0.0.0/16
+      subnets:
+        public: 2 (for ALB)
+        private: 2 (for ECS/RDS)
+
+    security_groups:
+    - alb-sg (allow 80, 443)
+    - ecs-sg (allow ALB traffic)
+    - rds-sg (allow ECS traffic)
+
+    load_balancer:
+      type: Application Load Balancer
+      scheme: internet-facing
+      listeners:
+      - HTTP (80) → redirect to HTTPS [planned]
+      - HTTPS (443) [planned]
+      target_groups:
+      - workout-planner-tg (port 8000)
+
+  cdn:
+    cloudfront:
+      distributions:
+      - workout-planner-web
+      behavior:
+        compress: true
+        viewer_protocol: redirect-to-https
+        cache_policy: CachingOptimized
+      custom_domain: [ planned ]
+      ssl_certificate: ACM [planned]
+
+environments:
+  development:
+    purpose: Local development and testing
+    infrastructure: Minimal (RDS shared with staging)
+    ecs_tasks: 1 (no autoscaling)
+    database: fitness-agent-dev
+    monitoring: Basic CloudWatch
+    cost: Optimized for low cost
+
+  staging:
+    purpose: Pre-production testing
+    infrastructure: Shared with development
+    ecs_tasks: 1-2 (basic autoscaling)
+    database: fitness-agent-dev (shared)
+    monitoring: Full CloudWatch + logs
+    cost: Moderate
+
+  production:
+    purpose: Live user traffic
+    infrastructure: Dedicated resources
+    ecs_tasks: 2-10 (full autoscaling)
+    database: fitness-agent-prod (dedicated)
+    multi_az: true
+    monitoring: Full CloudWatch + Prometheus + alerts
+    cost: Optimized for performance and reliability
+
+security:
+  iam:
+    roles:
+    - ecs-task-execution-role (ECS to pull images, write logs)
+    - ecs-task-role (application permissions)
+    - github-actions-role (OIDC deployment)
+    policies: Principle of least privilege
+
+  secrets_management:
+    service: AWS Secrets Manager
+    rotation: Automatic (90 days)
+    access: IAM role-based
+
+  network:
+    vpc_security:
+    - Private subnets for ECS and RDS
+    - Public subnets for ALB only
+    - NAT Gateway for outbound traffic
+    encryption:
+    - TLS in transit (ALB, RDS)
+    - Encryption at rest (RDS, S3)
+
+  compliance:
+  - No public database access
+  - Security groups with minimal ports
+  - CloudTrail logging enabled
+  - VPC Flow Logs [planned]
+
+monitoring:
+  cloudwatch_logs:
+    log_groups:
+    - /ecs/workout-planner
+    - /ecs/meal-planner
+    - /ecs/home-manager
+    - /ecs/vehicle-manager
+    retention: 7 days (dev), 30 days (prod)
+
+  cloudwatch_metrics:
+    collected:
+    - ECS CPU/Memory utilization
+    - RDS connections, CPU, storage
+    - ALB request count, latency, errors
+    - S3 bucket metrics
+
+  cloudwatch_alarms:
+    critical:
+    - ECS service unhealthy
+    - RDS CPU > 85%
+    - ALB 5xx errors > 1%
+    - Database storage < 10%
+    notifications: SNS topics → Email/Slack
+
+  dashboards:
+  - ECS Services Dashboard
+  - RDS Performance Dashboard
+  - Application Metrics Dashboard
+
+cost_management:
+  strategies:
+  - Right-size ECS tasks (512 CPU, 1024 MB)
+  - T3 instances for RDS (burstable)
+  - S3 lifecycle policies
+  - CloudWatch log retention limits
+  - Auto-scaling to min tasks during low usage
+
+  cost_allocation_tags:
+  - Environment (dev/staging/prod)
+  - Service (workout-planner, meal-planner, etc.)
+  - ManagedBy (terraform)
+
+  budgets:
+    monthly_alert: $100 threshold
+
+disaster_recovery:
+  rto: 4 hours (Recovery Time Objective)
+  rpo: 24 hours (Recovery Point Objective)
+
+  backup_strategy:
+    database:
+      automated_snapshots: Daily at 2 AM UTC
+      retention: 7 days
+      manual_snapshots: Before major changes
+
+    application:
+      docker_images: Stored in ECR (immutable)
+      configuration: Version controlled in Git
+
+  recovery_procedures:
+  - Database restore from snapshot
+  - Redeploy from last known good image
+  - Terraform state recovery from S3
+
+prerequisites:
+  aws:
+  - AWS Account with appropriate permissions
+  - AWS CLI configured
+  - Terraform installed
+  - ECS Cluster created
+  - OIDC Provider for GitHub Actions
+
+  github:
+  - Repository secrets configured
+  - AWS_ROLE_TO_ASSUME set
+  - Workflows enabled
+
+deployment_process:
+  initial_setup:
+    1: Run setup-oidc-role.sh
+    2: Run terraform init
+    3: Run terraform plan
+    4: Run terraform apply
+    5: Create ECS services
+    6: Configure GitHub secrets
+
+  ongoing_deployments:
+  - Push to main → automatic deployment
+  - Manual trigger via GitHub Actions
+  - Rollback via ECS task definition revision
+
+documentation:
+  README.md: Overview and quick start
+  PRODUCTION_DEPLOYMENT_GUIDE.md: Detailed deployment guide
+  docs/PRODUCTION_DEPLOYMENT.md: Production-specific procedures
+  scripts/README.md: Script documentation
+
+future_enhancements:
+  planned:
+  - Multi-region deployment
+  - Route53 DNS management
+  - ACM SSL certificates
+  - WAF (Web Application Firewall)
+  - ElastiCache Redis
+  - VPC peering for multi-account
+  - Enhanced monitoring with Prometheus/Grafana
+  - Cost optimization with Savings Plans
+
+  under_consideration:
+  - Kubernetes (EKS) migration
+  - Service mesh (App Mesh)
+  - API Gateway
+  - Lambda for serverless functions
+  - DynamoDB for session storage
