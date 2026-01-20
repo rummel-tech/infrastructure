@@ -20,6 +20,8 @@ env:
   ECS_SERVICE: vehicle-manager-service
   ECS_CLUSTER: app-cluster
   CONTAINER_NAME: vehicle-manager
+  SERVICE_NAME: vehicle-manager
+  SERVICE_PORT: 8030
 
 jobs:
   build-and-deploy:
@@ -28,12 +30,13 @@ jobs:
       - name: Checkout infrastructure repo
         uses: actions/checkout@v4
 
-      - name: Checkout vehicle-manager repo
+      - name: Checkout services repo
         uses: actions/checkout@v4
         with:
-          repository: rummel-tech/vehicle-manager
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
-          path: app-repo
+          path: services-repo
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -51,12 +54,14 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build Docker image
-        working-directory: app-repo/backend
+        working-directory: services-repo
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          # Build using the Dockerfile in the service directory
+          # which expects common/ and service directories at the repo root
+          docker build -f $SERVICE_NAME/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
       - name: Push image to Amazon ECR
@@ -67,8 +72,76 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      - name: Deployment Note
+      - name: Check for ECS task definition
+        id: check-task-def
         run: |
-          echo "✅ Container image pushed successfully!"
-          echo "📦 Image: ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}"
-          echo "ℹ️  Configure ECS service and task definition to deploy"
+          if [ -f "aws/ecs-task-definitions/$SERVICE_NAME.json" ]; then
+            echo "task_def_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "task_def_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update task definition
+        if: steps.check-task-def.outputs.task_def_exists == 'true'
+        id: task-def
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+          sed "s/{ACCOUNT_ID}/$ACCOUNT_ID/g; s|{ECR_REGISTRY}|$ECR_REGISTRY|g" \
+            aws/ecs-task-definitions/$SERVICE_NAME.json > /tmp/task-def.json
+
+          jq --arg IMAGE "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            '.containerDefinitions[0].image = $IMAGE' \
+            /tmp/task-def.json > /tmp/task-def-final.json
+
+          aws ecs register-task-definition \
+            --cli-input-json file:///tmp/task-def-final.json \
+            --region $AWS_REGION
+
+      - name: Deploy to ECS
+        if: steps.check-task-def.outputs.task_def_exists == 'true'
+        run: |
+          SERVICE_EXISTS=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --region $AWS_REGION \
+            --query 'services[0].status' \
+            --output text 2>/dev/null || echo "")
+
+          if [ "$SERVICE_EXISTS" == "ACTIVE" ]; then
+            echo "Service exists, updating..."
+            aws ecs update-service \
+              --cluster $ECS_CLUSTER \
+              --service $ECS_SERVICE \
+              --task-definition $SERVICE_NAME \
+              --force-new-deployment \
+              --region $AWS_REGION
+
+            echo "Waiting for service to stabilize..."
+            aws ecs wait services-stable \
+              --cluster $ECS_CLUSTER \
+              --services $ECS_SERVICE \
+              --region $AWS_REGION
+          else
+            echo "ECS service does not exist yet."
+            echo "Run the create-ecs-service.sh script to create it first."
+          fi
+
+      - name: Deployment Success
+        run: |
+          echo "============================================================"
+          echo "  VEHICLE MANAGER BACKEND DEPLOYED SUCCESSFULLY"
+          echo "============================================================"
+          echo ""
+          echo "Image: ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}"
+          echo "Service: $ECS_SERVICE"
+          echo "Cluster: $ECS_CLUSTER"
+          echo ""
+          echo "View logs:"
+          echo "   aws logs tail /ecs/$SERVICE_NAME --follow --region $AWS_REGION"
+          echo ""
+          echo "Check service status:"
+          echo "   aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION"

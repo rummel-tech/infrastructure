@@ -455,3 +455,7 @@ For issues or questions:
 
 **Maintained by**: Shawn Rummel
 **Last Updated**: 2025-11-20
+
+---
+
+[Platform Documentation](../docs/) | [Infrastructure Overview](../docs/infrastructure/)

@@ -5,6 +5,7 @@
   "cpu": "256",
   "memory": "512",
   "executionRoleArn": "arn:aws:iam::{ACCOUNT_ID}:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::{ACCOUNT_ID}:role/ecsTaskRole",
   "containerDefinitions": [
     {
       "name": "vehicle-manager",
@@ -22,8 +23,16 @@
           "value": "8030"
         },
         {
-          "name": "ENV",
+          "name": "ENVIRONMENT",
           "value": "production"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "value": "info"
+        },
+        {
+          "name": "CORS_ORIGINS",
+          "value": "https://rummel-tech.github.io,https://vehicle-manager.rummel.tech"
         }
       ],
       "logConfiguration": {
@@ -31,15 +40,16 @@
         "options": {
           "awslogs-group": "/ecs/vehicle-manager",
           "awslogs-region": "us-east-1",
-          "awslogs-stream-prefix": "ecs"
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
         }
       },
       "healthCheck": {
-        "command": ["CMD-SHELL", "curl -f http://localhost:8030/health || exit 1"],
+        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8030/health')\" || exit 1"],
         "interval": 30,
         "timeout": 5,
         "retries": 3,
-        "startPeriod": 60
+        "startPeriod": 30
       }
     }
   ]

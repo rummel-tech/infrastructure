@@ -1,0 +1,248 @@
+name: Security Scan - All Services
+
+on:
+  repository_dispatch:
+    types: [security-scan-services]
+  workflow_dispatch:
+    inputs:
+      repo_ref:
+        description: 'Repository ref to scan'
+        required: false
+        default: 'main'
+  schedule:
+    # Run security scans weekly on Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - '**/requirements.txt'
+      - '**/pyproject.toml'
+      - '**/Dockerfile'
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  bandit-scan:
+    name: Static Code Analysis (Bandit)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [common, home-manager, meal-planner, vehicle-manager, workout-planner]
+
+    steps:
+      - name: Checkout services repo
+        uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ github.event.inputs.repo_ref || github.ref }}
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit security scan on ${{ matrix.service }}
+        run: |
+          bandit -r ${{ matrix.service }} \
+            -x ./.venv,./tests,./htmlcov,__pycache__,.pytest_cache \
+            --skip B101 \
+            -f json \
+            -o bandit-${{ matrix.service }}.json || true
+
+      - name: Analyze Bandit results
+        run: |
+          python << 'EOF'
+          import json
+          import os
+
+          service = "${{ matrix.service }}"
+          report_file = f"bandit-{service}.json"
+
+          try:
+              with open(report_file, 'r') as f:
+                  report = json.load(f)
+
+              results = report.get('results', [])
+              high = sum(1 for r in results if r.get('issue_severity') == 'HIGH')
+              medium = sum(1 for r in results if r.get('issue_severity') == 'MEDIUM')
+              low = sum(1 for r in results if r.get('issue_severity') == 'LOW')
+
+              print(f"🔍 Bandit Scan: {service}")
+              print(f"  High:   {high}")
+              print(f"  Medium: {medium}")
+              print(f"  Low:    {low}")
+
+              if high > 0:
+                  print(f"❌ {service}: High severity issues found!")
+                  exit(1)
+              else:
+                  print(f"✅ {service}: No high severity issues")
+          except FileNotFoundError:
+              print(f"⚠️ No report found for {service}")
+          EOF
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-${{ matrix.service }}
+          path: bandit-${{ matrix.service }}.json
+          retention-days: 30
+
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [home-manager, meal-planner, vehicle-manager, workout-planner]
+
+    steps:
+      - name: Checkout services repo
+        uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ github.event.inputs.repo_ref || github.ref }}
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies and pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+          pip install -r ${{ matrix.service }}/requirements.txt || true
+
+      - name: Run pip-audit on ${{ matrix.service }}
+        run: |
+          pip-audit --format json --output pip-audit-${{ matrix.service }}.json || true
+
+      - name: Analyze pip-audit results
+        run: |
+          python << 'EOF'
+          import json
+          import os
+
+          service = "${{ matrix.service }}"
+          report_file = f"pip-audit-{service}.json"
+
+          try:
+              with open(report_file, 'r') as f:
+                  report = json.load(f)
+
+              vulns = len(report) if isinstance(report, list) else 0
+
+              print(f"🔍 Dependency Scan: {service}")
+              print(f"  Vulnerabilities: {vulns}")
+
+              if vulns > 0:
+                  print(f"⚠️ {service}: Vulnerabilities found (review required)")
+              else:
+                  print(f"✅ {service}: No vulnerabilities found")
+          except (FileNotFoundError, json.JSONDecodeError):
+              print(f"⚠️ Could not parse report for {service}")
+          EOF
+
+      - name: Upload pip-audit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-${{ matrix.service }}
+          path: pip-audit-${{ matrix.service }}.json
+          retention-days: 30
+
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [bandit-scan, dependency-scan]
+    if: always()
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: reports/
+
+      - name: Generate consolidated summary
+        run: |
+          python << 'EOF'
+          import json
+          import os
+          from pathlib import Path
+
+          services = ['common', 'home-manager', 'meal-planner', 'vehicle-manager', 'workout-planner']
+          results = {}
+
+          # Process Bandit reports
+          for service in services:
+              bandit_path = Path(f"reports/bandit-{service}/bandit-{service}.json")
+              if bandit_path.exists():
+                  try:
+                      with open(bandit_path, 'r') as f:
+                          report = json.load(f)
+                      issues = report.get('results', [])
+                      results[service] = {
+                          'bandit_high': sum(1 for r in issues if r.get('issue_severity') == 'HIGH'),
+                          'bandit_medium': sum(1 for r in issues if r.get('issue_severity') == 'MEDIUM'),
+                          'bandit_low': sum(1 for r in issues if r.get('issue_severity') == 'LOW'),
+                      }
+                  except:
+                      results[service] = {'bandit_high': 0, 'bandit_medium': 0, 'bandit_low': 0}
+              else:
+                  results[service] = {'bandit_high': 0, 'bandit_medium': 0, 'bandit_low': 0}
+
+          # Print summary
+          print("# 🔒 Security Scan Summary\n")
+          print("| Service | High | Medium | Low |")
+          print("|---------|------|--------|-----|")
+
+          total_high = 0
+          for service in services:
+              r = results.get(service, {})
+              high = r.get('bandit_high', 0)
+              medium = r.get('bandit_medium', 0)
+              low = r.get('bandit_low', 0)
+              total_high += high
+              status = "❌" if high > 0 else "✅"
+              print(f"| {status} {service} | {high} | {medium} | {low} |")
+
+          print("\n---\n")
+          if total_high > 0:
+              print("❌ **High severity issues found - review required**")
+          else:
+              print("✅ **All services passed security scan**")
+          EOF
+
+      - name: Check for failures
+        run: |
+          # Fail if any high severity issues were found
+          if [ -f reports/bandit-*/bandit-*.json ]; then
+            HIGH_COUNT=$(python -c "
+          import json
+          from pathlib import Path
+          total = 0
+          for f in Path('reports').glob('bandit-*/bandit-*.json'):
+              try:
+                  report = json.load(open(f))
+                  total += sum(1 for r in report.get('results', []) if r.get('issue_severity') == 'HIGH')
+              except: pass
+          print(total)
+          ")
+            if [ "$HIGH_COUNT" -gt 0 ]; then
+              echo "❌ Found $HIGH_COUNT high severity issues"
+              exit 1
+            fi
+          fi
+          echo "✅ Security scan passed"
