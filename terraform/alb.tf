@@ -1,10 +1,11 @@
-# Application Load Balancer for Workout Planner
+# Application Load Balancer for Artemis Platform
+# Shared ALB with path-based routing to multiple backend services
 
 # Security group for ALB
 resource "aws_security_group" "alb" {
-  name        = "${var.app_name}-alb-sg"
+  name        = "${var.environment}-alb-sg"
   description = "Security group for Application Load Balancer"
-  vpc_id      = var.vpc_id
+  vpc_id      = aws_vpc.main.id
 
   ingress {
     description = "HTTPS from internet"
@@ -30,23 +31,27 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${var.app_name}-alb-sg"
-  }
+  tags = merge(local.common_tags, {
+    Name = "${var.environment}-alb-sg"
+  })
 }
 
 # Security group for ECS tasks
 resource "aws_security_group" "ecs_tasks" {
-  name        = "${var.app_name}-ecs-tasks-sg"
+  name        = "${var.environment}-ecs-tasks-sg"
   description = "Security group for ECS tasks"
-  vpc_id      = var.vpc_id
+  vpc_id      = aws_vpc.main.id
 
-  ingress {
-    description     = "HTTP from ALB"
-    from_port       = 8000
-    to_port         = 8000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
+  # Dynamic ingress rules for each application port
+  dynamic "ingress" {
+    for_each = { for k, v in var.applications : k => v if v.enabled }
+    content {
+      description     = "HTTP from ALB for ${ingress.key}"
+      from_port       = ingress.value.port
+      to_port         = ingress.value.port
+      protocol        = "tcp"
+      security_groups = [aws_security_group.alb.id]
+    }
   }
 
   egress {
@@ -57,21 +62,21 @@ resource "aws_security_group" "ecs_tasks" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${var.app_name}-ecs-tasks-sg"
-  }
+  tags = merge(local.common_tags, {
+    Name = "${var.environment}-ecs-tasks-sg"
+  })
 }
 
 # Application Load Balancer
 resource "aws_lb" "main" {
-  name               = "${var.app_name}-alb"
+  name               = "${var.environment}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = var.public_subnet_ids
+  subnets            = aws_subnet.public[*].id
 
-  enable_deletion_protection = true
-  enable_http2              = true
+  enable_deletion_protection       = var.environment == "production"
+  enable_http2                     = true
   enable_cross_zone_load_balancing = true
 
   access_logs {
@@ -79,18 +84,18 @@ resource "aws_lb" "main" {
     enabled = true
   }
 
-  tags = {
-    Name = "${var.app_name}-alb"
-  }
+  tags = merge(local.common_tags, {
+    Name = "${var.environment}-alb"
+  })
 }
 
 # S3 bucket for ALB access logs
 resource "aws_s3_bucket" "alb_logs" {
-  bucket = "${var.app_name}-alb-logs-${data.aws_caller_identity.current.account_id}"
+  bucket = "${var.environment}-alb-logs-${data.aws_caller_identity.current.account_id}"
 
-  tags = {
-    Name = "${var.app_name}-alb-logs"
-  }
+  tags = merge(local.common_tags, {
+    Name = "${var.environment}-alb-logs"
+  })
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
@@ -101,7 +106,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
     status = "Enabled"
 
     expiration {
-      days = 90
+      days = var.environment == "production" ? 90 : 30
     }
   }
 }
@@ -125,12 +130,14 @@ resource "aws_s3_bucket_policy" "alb_logs" {
 data "aws_elb_service_account" "main" {}
 data "aws_caller_identity" "current" {}
 
-# Target group for ECS tasks
-resource "aws_lb_target_group" "main" {
-  name        = "${var.app_name}-tg"
-  port        = 8000
+# Target groups for each application
+resource "aws_lb_target_group" "apps" {
+  for_each = { for k, v in var.applications : k => v if v.enabled }
+
+  name        = "${var.environment}-${each.key}-tg"
+  port        = each.value.port
   protocol    = "HTTP"
-  vpc_id      = var.vpc_id
+  vpc_id      = aws_vpc.main.id
   target_type = "ip"
 
   health_check {
@@ -139,7 +146,7 @@ resource "aws_lb_target_group" "main" {
     unhealthy_threshold = 3
     timeout             = 5
     interval            = 30
-    path                = "/health"
+    path                = each.value.health_check_path
     matcher             = "200"
   }
 
@@ -147,13 +154,14 @@ resource "aws_lb_target_group" "main" {
 
   stickiness {
     type            = "lb_cookie"
-    cookie_duration = 86400  # 24 hours
+    cookie_duration = 86400 # 24 hours
     enabled         = true
   }
 
-  tags = {
-    Name = "${var.app_name}-target-group"
-  }
+  tags = merge(local.common_tags, {
+    Name        = "${var.environment}-${each.key}-target-group"
+    Application = each.key
+  })
 }
 
 # HTTPS listener (primary)
@@ -163,23 +171,27 @@ resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.main.arn
   port              = "443"
   protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn   = var.certificate_arn
 
   default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.main.arn
+    type = "fixed-response"
+    fixed_response {
+      content_type = "application/json"
+      message_body = jsonencode({ status = "healthy", environment = var.environment })
+      status_code  = "200"
+    }
   }
 }
 
-# HTTP listener (redirect to HTTPS)
+# HTTP listener (redirect to HTTPS or forward if no cert)
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = "80"
   protocol          = "HTTP"
 
   default_action {
-    type = var.certificate_arn != "" ? "redirect" : "forward"
+    type = var.certificate_arn != "" ? "redirect" : "fixed-response"
 
     dynamic "redirect" {
       for_each = var.certificate_arn != "" ? [1] : []
@@ -190,32 +202,61 @@ resource "aws_lb_listener" "http" {
       }
     }
 
-    target_group_arn = var.certificate_arn == "" ? aws_lb_target_group.main.arn : null
+    dynamic "fixed_response" {
+      for_each = var.certificate_arn == "" ? [1] : []
+      content {
+        content_type = "application/json"
+        message_body = jsonencode({ status = "healthy", environment = var.environment })
+        status_code  = "200"
+      }
+    }
   }
 }
 
-# Output ALB information
-output "alb_dns_name" {
-  description = "DNS name of the load balancer"
-  value       = aws_lb.main.dns_name
+# Listener rules for path-based routing to each application
+resource "aws_lb_listener_rule" "apps_https" {
+  for_each = var.certificate_arn != "" ? { for k, v in var.applications : k => v if v.enabled } : {}
+
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 100 + index(keys({ for k, v in var.applications : k => v if v.enabled }), each.key)
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.apps[each.key].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/${each.key}/*", "/api/${each.key}"]
+    }
+  }
+
+  # Also route by host header if custom domains are configured
+  dynamic "condition" {
+    for_each = var.domain_name != "" ? [1] : []
+    content {
+      host_header {
+        values = ["${each.key}.${var.domain_name}", "${each.key}-api.${var.domain_name}"]
+      }
+    }
+  }
 }
 
-output "alb_zone_id" {
-  description = "Zone ID of the load balancer"
-  value       = aws_lb.main.zone_id
-}
+# Listener rules for HTTP (when no cert)
+resource "aws_lb_listener_rule" "apps_http" {
+  for_each = var.certificate_arn == "" ? { for k, v in var.applications : k => v if v.enabled } : {}
 
-output "target_group_arn" {
-  description = "ARN of the target group"
-  value       = aws_lb_target_group.main.arn
-}
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 100 + index(keys({ for k, v in var.applications : k => v if v.enabled }), each.key)
 
-output "alb_security_group_id" {
-  description = "Security group ID for ALB"
-  value       = aws_security_group.alb.id
-}
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.apps[each.key].arn
+  }
 
-output "ecs_security_group_id" {
-  description = "Security group ID for ECS tasks"
-  value       = aws_security_group.ecs_tasks.id
+  condition {
+    path_pattern {
+      values = ["/api/${each.key}/*", "/api/${each.key}"]
+    }
+  }
 }

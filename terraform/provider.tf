@@ -1,30 +1,13 @@
-# Terraform Provider Configuration
+# Provider Configuration
+# Note: Main terraform and provider blocks are in main.tf
+# This file contains additional provider configurations if needed
 
-terraform {
-  required_version = ">= 1.0"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-
-  # Backend configuration for remote state (optional)
-  # Uncomment and configure for team collaboration
-  # backend "s3" {
-  #   bucket         = "your-terraform-state-bucket"
-  #   key            = "workout-planner/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   encrypt        = true
-  #   dynamodb_table = "terraform-state-lock"
-  # }
-}
-
+# Provider for us-east-1 (required for CloudFront certificates)
 provider "aws" {
-  region = var.aws_region
+  alias  = "us_east_1"
+  region = "us-east-1"
 
   default_tags {
-    tags = var.tags
+    tags = local.common_tags
   }
 }

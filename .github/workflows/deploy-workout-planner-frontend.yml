@@ -5,98 +5,43 @@ on:
     types: [deploy-workout-planner-frontend]
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: 'staging'
       repo_ref:
         description: 'Repository ref to deploy'
         required: false
         default: 'main'
       api_url:
-        description: 'Production API URL (leave empty to use default)'
+        description: 'API URL override (optional)'
         required: false
-        default: ''
-
-permissions:
-  id-token: write
-  contents: read
-
-env:
-  AWS_REGION: us-east-1
-  S3_BUCKET: workout-planner-frontend-901746942632
-  CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
-  PRODUCTION_API_URL: ${{ github.event.inputs.api_url || secrets.PRODUCTION_API_URL || 'https://api.workout-planner.rummel.tech' }}
 
 jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout infrastructure repo
-        uses: actions/checkout@v4
+  deploy-staging:
+    if: github.event.inputs.environment == 'staging' || github.event_name == 'repository_dispatch'
+    uses: ./.github/workflows/deploy-frontend.yml
+    with:
+      app_name: workout-planner
+      environment: staging
+      repo_ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
+      api_url: ${{ github.event.inputs.api_url || '' }}
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
 
-      - name: Checkout workout-planner repo
-        uses: actions/checkout@v4
-        with:
-          repository: rummel-tech/workout-planner
-          token: ${{ secrets.PAT_TOKEN }}
-          ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
-          path: app-repo
-
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.27.0'
-          channel: 'stable'
-          cache: true
-
-      - name: Enable Flutter web
-        run: flutter config --enable-web
-
-      - name: Configure git for private dependencies
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
-      - name: Build Workout Planner web
-        working-directory: app-repo
-        run: |
-          echo "Building with API URL: $PRODUCTION_API_URL"
-          flutter pub get
-          flutter build web --release \
-            --base-href / \
-            --dart-define=PRODUCTION_API_URL=$PRODUCTION_API_URL \
-            --dart-define=WEB_API_URL=$PRODUCTION_API_URL
-
-      - name: Deploy to S3
-        working-directory: app-repo/build/web
-        run: |
-          aws s3 sync . s3://$S3_BUCKET --delete --cache-control "max-age=31536000,public"
-          # Set shorter cache for HTML files
-          aws s3 cp s3://$S3_BUCKET/index.html s3://$S3_BUCKET/index.html \
-            --metadata-directive REPLACE \
-            --cache-control "max-age=0,no-cache,no-store,must-revalidate" \
-            --content-type "text/html"
-
-      - name: Invalidate CloudFront cache
-        run: |
-          if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
-            aws cloudfront create-invalidation \
-              --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
-              --paths "/*"
-            echo "CloudFront cache invalidated"
-          else
-            echo "No CloudFront distribution ID configured, skipping invalidation"
-          fi
-
-      - name: Deployment success
-        run: |
-          echo "============================================================"
-          echo "  WORKOUT PLANNER FRONTEND DEPLOYED SUCCESSFULLY"
-          echo "============================================================"
-          echo ""
-          echo "S3 Bucket: $S3_BUCKET"
-          echo "API URL: $PRODUCTION_API_URL"
-          echo ""
-          echo "Access via CloudFront distribution or S3 website endpoint"
+  deploy-production:
+    if: github.event.inputs.environment == 'production'
+    uses: ./.github/workflows/deploy-frontend.yml
+    with:
+      app_name: workout-planner
+      environment: production
+      repo_ref: ${{ github.event.inputs.repo_ref || 'main' }}
+      api_url: ${{ github.event.inputs.api_url || '' }}
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}

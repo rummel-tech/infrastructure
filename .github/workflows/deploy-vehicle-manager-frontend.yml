@@ -5,57 +5,43 @@ on:
     types: [deploy-vehicle-manager-frontend]
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: 'staging'
       repo_ref:
         description: 'Repository ref to deploy'
         required: false
         default: 'main'
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+      api_url:
+        description: 'API URL override (optional)'
+        required: false
 
 jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout infrastructure repo
-        uses: actions/checkout@v4
+  deploy-staging:
+    if: github.event.inputs.environment == 'staging' || github.event_name == 'repository_dispatch'
+    uses: ./.github/workflows/deploy-frontend.yml
+    with:
+      app_name: vehicle-manager
+      environment: staging
+      repo_ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
+      api_url: ${{ github.event.inputs.api_url || '' }}
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
 
-      - name: Checkout vehicle-manager repo
-        uses: actions/checkout@v4
-        with:
-          repository: rummel-tech/vehicle-manager
-          ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
-          path: app-repo
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.22.0'
-          channel: 'stable'
-          cache: true
-
-      - name: Enable Flutter web
-        run: flutter config --enable-web
-
-      - name: Build Vehicle Manager web
-        working-directory: app-repo/frontend/app/vehicle_app
-        run: |
-          flutter pub get
-          flutter build web --release
-          cp build/web/index.html build/web/404.html
-
-      - name: Upload to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: app-repo/frontend/app/vehicle_app/build/web
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-      - name: Deployment success
-        run: |
-          echo "✅ Vehicle Manager frontend deployed successfully!"
-          echo "🌐 URL: ${{ steps.deployment.outputs.page_url }}"
+  deploy-production:
+    if: github.event.inputs.environment == 'production'
+    uses: ./.github/workflows/deploy-frontend.yml
+    with:
+      app_name: vehicle-manager
+      environment: production
+      repo_ref: ${{ github.event.inputs.repo_ref || 'main' }}
+      api_url: ${{ github.event.inputs.api_url || '' }}
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}

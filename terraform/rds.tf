@@ -1,10 +1,11 @@
-# RDS PostgreSQL Database for Workout Planner
+# RDS PostgreSQL Database for Artemis Platform
+# Shared database instance for all applications
 
 # Security group for RDS
 resource "aws_security_group" "rds" {
-  name        = "${var.app_name}-rds-sg"
+  name        = "${var.environment}-rds-sg"
   description = "Security group for RDS PostgreSQL"
-  vpc_id      = var.vpc_id
+  vpc_id      = aws_vpc.main.id
 
   ingress {
     description     = "PostgreSQL from ECS"
@@ -22,30 +23,31 @@ resource "aws_security_group" "rds" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${var.app_name}-rds-sg"
-  }
+  tags = merge(local.common_tags, {
+    Name = "${var.environment}-rds-sg"
+  })
 }
 
 # DB subnet group
 resource "aws_db_subnet_group" "main" {
-  name       = "${var.app_name}-db-subnet-group"
-  subnet_ids = var.private_subnet_ids
+  name       = "${var.environment}-db-subnet-group"
+  subnet_ids = aws_subnet.private[*].id
 
-  tags = {
-    Name = "${var.app_name}-db-subnet-group"
-  }
+  tags = merge(local.common_tags, {
+    Name = "${var.environment}-db-subnet-group"
+  })
 }
 
 # Random password for database
 resource "random_password" "db_password" {
-  length  = 32
-  special = true
+  length           = 32
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
 # RDS PostgreSQL instance
 resource "aws_db_instance" "main" {
-  identifier = "${var.app_name}-db"
+  identifier = "${var.environment}-artemis-db"
 
   # Engine configuration
   engine         = "postgres"
@@ -56,11 +58,11 @@ resource "aws_db_instance" "main" {
   allocated_storage     = var.db_allocated_storage
   storage_type          = "gp3"
   storage_encrypted     = true
-  max_allocated_storage = 100  # Enable storage autoscaling
+  max_allocated_storage = var.environment == "production" ? 100 : 50
 
   # Database configuration
-  db_name  = "workout_planner"
-  username = "workout_app"
+  db_name  = var.db_name
+  username = "artemis_admin"
   password = random_password.db_password.result
   port     = 5432
 
@@ -72,43 +74,47 @@ resource "aws_db_instance" "main" {
 
   # Backup configuration
   backup_retention_period = var.db_backup_retention_period
-  backup_window           = "03:00-04:00"  # 3-4 AM UTC
-  maintenance_window      = "sun:04:00-sun:05:00"  # Sunday 4-5 AM UTC
+  backup_window           = "03:00-04:00" # 3-4 AM UTC
+  maintenance_window      = "sun:04:00-sun:05:00" # Sunday 4-5 AM UTC
 
   # Enable automatic minor version upgrades
   auto_minor_version_upgrade = true
 
   # Enhanced monitoring
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
-  monitoring_interval             = 60
-  monitoring_role_arn             = aws_iam_role.rds_monitoring.arn
+  monitoring_interval             = var.environment == "production" ? 60 : 0
+  monitoring_role_arn             = var.environment == "production" ? aws_iam_role.rds_monitoring[0].arn : null
 
   # Performance Insights
-  performance_insights_enabled    = true
-  performance_insights_retention_period = 7
+  performance_insights_enabled          = var.environment == "production"
+  performance_insights_retention_period = var.environment == "production" ? 7 : 0
 
   # Deletion protection
-  deletion_protection = true
-  skip_final_snapshot = false
-  final_snapshot_identifier = "${var.app_name}-final-snapshot-${formatdate("YYYY-MM-DD-hhmm", timestamp())}"
+  deletion_protection   = var.environment == "production"
+  skip_final_snapshot   = var.environment != "production"
+  final_snapshot_identifier = var.environment == "production" ? "${var.environment}-artemis-final-${formatdate("YYYY-MM-DD-hhmm", timestamp())}" : null
 
   # Parameter group
   parameter_group_name = aws_db_parameter_group.main.name
 
-  tags = {
-    Name = "${var.app_name}-database"
+  tags = merge(local.common_tags, {
+    Name = "${var.environment}-artemis-database"
+  })
+
+  lifecycle {
+    ignore_changes = [final_snapshot_identifier]
   }
 }
 
 # DB parameter group for tuning
 resource "aws_db_parameter_group" "main" {
-  name   = "${var.app_name}-pg15"
+  name   = "${var.environment}-artemis-pg15"
   family = "postgres15"
 
   # Connection pooling settings
   parameter {
     name  = "max_connections"
-    value = "100"
+    value = var.environment == "production" ? "200" : "100"
   }
 
   # Logging settings
@@ -124,17 +130,18 @@ resource "aws_db_parameter_group" "main" {
 
   parameter {
     name  = "log_statement"
-    value = "ddl"  # Log DDL statements
+    value = "ddl" # Log DDL statements
   }
 
-  tags = {
-    Name = "${var.app_name}-parameter-group"
-  }
+  tags = merge(local.common_tags, {
+    Name = "${var.environment}-artemis-parameter-group"
+  })
 }
 
-# IAM role for enhanced monitoring
+# IAM role for enhanced monitoring (production only)
 resource "aws_iam_role" "rds_monitoring" {
-  name = "${var.app_name}-rds-monitoring-role"
+  count = var.environment == "production" ? 1 : 0
+  name  = "${var.environment}-rds-monitoring-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -146,19 +153,24 @@ resource "aws_iam_role" "rds_monitoring" {
       }
     }]
   })
+
+  tags = local.common_tags
 }
 
 resource "aws_iam_role_policy_attachment" "rds_monitoring" {
-  role       = aws_iam_role.rds_monitoring.name
+  count      = var.environment == "production" ? 1 : 0
+  role       = aws_iam_role.rds_monitoring[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
 # Store database credentials in Secrets Manager
 resource "aws_secretsmanager_secret" "db_credentials" {
-  name        = "${var.app_name}/database"
-  description = "Database credentials for ${var.app_name}"
+  name        = "${var.environment}/artemis/database"
+  description = "Database credentials for ${var.environment} environment"
 
-  recovery_window_in_days = 7  # Allow recovery if accidentally deleted
+  recovery_window_in_days = var.environment == "production" ? 30 : 7
+
+  tags = local.common_tags
 }
 
 resource "aws_secretsmanager_secret_version" "db_credentials" {
@@ -173,19 +185,23 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
   })
 }
 
-# Output database information
-output "database_endpoint" {
-  description = "RDS database endpoint"
-  value       = aws_db_instance.main.endpoint
+# Create application-specific secrets for database URLs
+resource "aws_secretsmanager_secret" "app_db_url" {
+  for_each = { for k, v in var.applications : k => v if v.enabled }
+
+  name        = "${var.environment}/${each.key}/database_url"
+  description = "Database URL for ${each.key} in ${var.environment}"
+
+  recovery_window_in_days = var.environment == "production" ? 30 : 7
+
+  tags = merge(local.common_tags, {
+    Application = each.key
+  })
 }
 
-output "database_secret_arn" {
-  description = "ARN of the database credentials secret"
-  value       = aws_secretsmanager_secret.db_credentials.arn
-}
+resource "aws_secretsmanager_secret_version" "app_db_url" {
+  for_each = { for k, v in var.applications : k => v if v.enabled }
 
-output "database_connection_string" {
-  description = "Database connection string (use secret for actual password)"
-  value       = "postgresql://${aws_db_instance.main.username}:***@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${aws_db_instance.main.db_name}"
-  sensitive   = true
+  secret_id     = aws_secretsmanager_secret.app_db_url[each.key].id
+  secret_string = "postgresql://${aws_db_instance.main.username}:${random_password.db_password.result}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}"
 }

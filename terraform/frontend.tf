@@ -1,19 +1,24 @@
-# Frontend Infrastructure - S3 + CloudFront for Workout Planner Web App
-# This hosts the Flutter web application as a static site
+# Frontend Infrastructure - S3 + CloudFront for Artemis Platform Web Apps
+# Hosts Flutter web applications as static sites
 
-# S3 Bucket for static website hosting
+# S3 Buckets for each application frontend
 resource "aws_s3_bucket" "frontend" {
-  bucket = "${var.app_name}-frontend-${var.environment}"
+  for_each = { for k, v in var.applications : k => v if v.enabled }
 
-  tags = merge(var.tags, {
-    Name = "${var.app_name}-frontend"
-    Type = "static-website"
+  bucket = "${var.environment}-${each.key}-frontend-${data.aws_caller_identity.current.account_id}"
+
+  tags = merge(local.common_tags, {
+    Name        = "${var.environment}-${each.key}-frontend"
+    Application = each.key
+    Type        = "static-website"
   })
 }
 
 # S3 bucket ownership controls
 resource "aws_s3_bucket_ownership_controls" "frontend" {
-  bucket = aws_s3_bucket.frontend.id
+  for_each = aws_s3_bucket.frontend
+
+  bucket = each.value.id
   rule {
     object_ownership = "BucketOwnerPreferred"
   }
@@ -21,7 +26,9 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
 
 # S3 bucket public access block - CloudFront will access via OAC
 resource "aws_s3_bucket_public_access_block" "frontend" {
-  bucket = aws_s3_bucket.frontend.id
+  for_each = aws_s3_bucket.frontend
+
+  bucket = each.value.id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -31,7 +38,9 @@ resource "aws_s3_bucket_public_access_block" "frontend" {
 
 # S3 bucket versioning
 resource "aws_s3_bucket_versioning" "frontend" {
-  bucket = aws_s3_bucket.frontend.id
+  for_each = aws_s3_bucket.frontend
+
+  bucket = each.value.id
   versioning_configuration {
     status = "Enabled"
   }
@@ -39,46 +48,52 @@ resource "aws_s3_bucket_versioning" "frontend" {
 
 # S3 bucket website configuration
 resource "aws_s3_bucket_website_configuration" "frontend" {
-  bucket = aws_s3_bucket.frontend.id
+  for_each = aws_s3_bucket.frontend
+
+  bucket = each.value.id
 
   index_document {
     suffix = "index.html"
   }
 
   error_document {
-    key = "index.html"  # SPA routing - return index.html for all routes
+    key = "index.html" # SPA routing - return index.html for all routes
   }
 }
 
 # CloudFront Origin Access Control
 resource "aws_cloudfront_origin_access_control" "frontend" {
-  name                              = "${var.app_name}-frontend-oac"
-  description                       = "OAC for ${var.app_name} frontend"
+  for_each = aws_s3_bucket.frontend
+
+  name                              = "${var.environment}-${each.key}-frontend-oac"
+  description                       = "OAC for ${each.key} frontend in ${var.environment}"
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
 }
 
-# CloudFront Distribution
+# CloudFront Distribution for each application
 resource "aws_cloudfront_distribution" "frontend" {
+  for_each = aws_s3_bucket.frontend
+
   enabled             = true
   is_ipv6_enabled     = true
-  comment             = "${var.app_name} Frontend Distribution"
+  comment             = "${each.key} Frontend Distribution (${var.environment})"
   default_root_object = "index.html"
-  price_class         = "PriceClass_100"  # US, Canada, Europe only for cost savings
+  price_class         = var.environment == "production" ? "PriceClass_100" : "PriceClass_100"
 
-  aliases = var.frontend_domain_name != "" ? [var.frontend_domain_name] : []
+  aliases = var.frontend_certificate_arn != "" && var.domain_name != "" ? ["${each.key}.${var.domain_name}"] : []
 
   origin {
-    domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
-    origin_id                = "S3-${aws_s3_bucket.frontend.id}"
-    origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
+    domain_name              = each.value.bucket_regional_domain_name
+    origin_id                = "S3-${each.value.id}"
+    origin_access_control_id = aws_cloudfront_origin_access_control.frontend[each.key].id
   }
 
   default_cache_behavior {
     allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "S3-${aws_s3_bucket.frontend.id}"
+    target_origin_id = "S3-${each.value.id}"
 
     forwarded_values {
       query_string = false
@@ -89,8 +104,29 @@ resource "aws_cloudfront_distribution" "frontend" {
 
     viewer_protocol_policy = "redirect-to-https"
     min_ttl                = 0
-    default_ttl            = 3600
-    max_ttl                = 86400
+    default_ttl            = var.environment == "production" ? 3600 : 60
+    max_ttl                = var.environment == "production" ? 86400 : 300
+    compress               = true
+  }
+
+  # Cache behavior for static assets (longer cache)
+  ordered_cache_behavior {
+    path_pattern     = "/assets/*"
+    allowed_methods  = ["GET", "HEAD"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "S3-${each.value.id}"
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 86400
+    default_ttl            = 604800   # 1 week
+    max_ttl                = 31536000 # 1 year
     compress               = true
   }
 
@@ -114,63 +150,40 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = var.frontend_certificate_arn == "" ? true : false
+    cloudfront_default_certificate = var.frontend_certificate_arn == ""
     acm_certificate_arn            = var.frontend_certificate_arn != "" ? var.frontend_certificate_arn : null
     ssl_support_method             = var.frontend_certificate_arn != "" ? "sni-only" : null
     minimum_protocol_version       = "TLSv1.2_2021"
   }
 
-  tags = merge(var.tags, {
-    Name = "${var.app_name}-frontend-cdn"
+  tags = merge(local.common_tags, {
+    Name        = "${var.environment}-${each.key}-frontend-cdn"
+    Application = each.key
   })
 }
 
 # S3 bucket policy to allow CloudFront access
 resource "aws_s3_bucket_policy" "frontend" {
-  bucket = aws_s3_bucket.frontend.id
+  for_each = aws_s3_bucket.frontend
+
+  bucket = each.value.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "AllowCloudFrontServicePrincipal"
-        Effect    = "Allow"
+        Sid    = "AllowCloudFrontServicePrincipal"
+        Effect = "Allow"
         Principal = {
           Service = "cloudfront.amazonaws.com"
         }
         Action   = "s3:GetObject"
-        Resource = "${aws_s3_bucket.frontend.arn}/*"
+        Resource = "${each.value.arn}/*"
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn
+            "AWS:SourceArn" = aws_cloudfront_distribution.frontend[each.key].arn
           }
         }
       }
     ]
   })
-}
-
-# Outputs
-output "frontend_bucket_name" {
-  description = "S3 bucket name for frontend assets"
-  value       = aws_s3_bucket.frontend.id
-}
-
-output "frontend_bucket_arn" {
-  description = "S3 bucket ARN for frontend assets"
-  value       = aws_s3_bucket.frontend.arn
-}
-
-output "cloudfront_distribution_id" {
-  description = "CloudFront distribution ID"
-  value       = aws_cloudfront_distribution.frontend.id
-}
-
-output "cloudfront_domain_name" {
-  description = "CloudFront distribution domain name"
-  value       = aws_cloudfront_distribution.frontend.domain_name
-}
-
-output "frontend_url" {
-  description = "Frontend URL"
-  value       = var.frontend_domain_name != "" ? "https://${var.frontend_domain_name}" : "https://${aws_cloudfront_distribution.frontend.domain_name}"
 }
