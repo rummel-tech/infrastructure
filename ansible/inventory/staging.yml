@@ -1,0 +1,71 @@
+---
+# Staging Environment Inventory
+
+all:
+  vars:
+    ansible_connection: local
+    aws_region: us-east-1
+    environment: staging
+
+staging:
+  children:
+    ecs_services:
+      hosts:
+        localhost:
+          ansible_connection: local
+      vars:
+        cluster_name: staging-cluster
+        services:
+          - name: artemis
+            port: 8000
+            desired_count: 1
+            needs_database: false
+          - name: home-manager
+            port: 8020
+            desired_count: 1
+            needs_database: true
+          - name: vehicle-manager
+            port: 8030
+            desired_count: 1
+            needs_database: true
+          - name: meal-planner
+            port: 8010
+            desired_count: 1
+            needs_database: true
+          - name: workout-planner
+            port: 8040
+            desired_count: 1
+            needs_database: true
+
+    databases:
+      hosts:
+        rds:
+          ansible_connection: local
+      vars:
+        db_identifier: staging-artemis
+        db_instance_class: db.t3.micro
+        db_name: artemis
+        db_username: admin
+        db_multi_az: false
+        db_backup_retention: 3
+
+    secrets:
+      hosts:
+        localhost:
+          ansible_connection: local
+      vars:
+        secret_prefix: staging
+        required_secrets:
+          - service: home-manager
+            secrets:
+              - database_url
+          - service: vehicle-manager
+            secrets:
+              - database_url
+          - service: meal-planner
+            secrets:
+              - database_url
+          - service: workout-planner
+            secrets:
+              - database_url
+              - jwt_secret

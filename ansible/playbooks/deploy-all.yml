@@ -1,0 +1,166 @@
+---
+# Complete deployment orchestration for all services
+# Usage: ansible-playbook -i inventory/staging.yml playbooks/deploy-all.yml
+
+- name: Pre-Deployment Setup
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Display deployment plan
+      debug:
+        msg: |
+          ================================================================
+          DEPLOYMENT PLAN - {{ environment | upper }} ENVIRONMENT
+          ================================================================
+
+          This playbook will:
+          1. Verify infrastructure prerequisites
+          2. Setup/verify AWS secrets
+          3. Trigger service deployments
+          4. Run database migrations
+          5. Validate deployment health
+
+          Cluster: {{ hostvars['localhost'].cluster_name }}
+          Services: {{ hostvars['localhost'].services | map(attribute='name') | join(', ') }}
+
+    - name: Confirm deployment
+      pause:
+        prompt: "Continue with deployment to {{ environment }}? (yes/no)"
+      register: confirm
+
+    - name: Abort if not confirmed
+      fail:
+        msg: "Deployment cancelled by user"
+      when: confirm.user_input | lower != 'yes'
+
+- name: Verify Infrastructure
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Check Terraform state
+      shell: |
+        cd ../../terraform
+        terraform workspace select {{ environment }} || terraform workspace new {{ environment }}
+        terraform output -json
+      register: tf_output
+      changed_when: false
+
+    - name: Parse Terraform outputs
+      set_fact:
+        tf_outputs: "{{ tf_output.stdout | from_json }}"
+      when: tf_output.stdout != ""
+
+    - name: Verify ECS cluster exists
+      shell: |
+        aws ecs describe-clusters \
+          --clusters {{ hostvars['localhost'].cluster_name }} \
+          --region {{ aws_region }} \
+          --query 'clusters[0].status' \
+          --output text
+      register: cluster_status
+      changed_when: false
+
+    - name: Display infrastructure status
+      debug:
+        msg: |
+          Cluster Status: {{ cluster_status.stdout }}
+          {% if tf_outputs is defined %}
+          Database: {{ tf_outputs.db_endpoint.value if tf_outputs.db_endpoint is defined else 'Not found' }}
+          ALB: {{ tf_outputs.alb_dns_name.value if tf_outputs.alb_dns_name is defined else 'Not found' }}
+          {% endif %}
+
+- name: Setup Secrets
+  import_playbook: setup-secrets.yml
+  tags: [secrets]
+
+- name: Deploy Services
+  hosts: ecs_services
+  gather_facts: no
+  serial: 1  # Deploy one at a time
+
+  tasks:
+    - name: Deploy services in dependency order
+      block:
+        - name: Deploy {{ item.name }}
+          shell: |
+            gh workflow run deploy-backend.yml \
+              --repo rummel-tech/infrastructure \
+              -f app_name={{ item.name }} \
+              -f environment={{ environment }} \
+              -f repo_ref=main
+          register: deploy_trigger
+          loop: "{{ services }}"
+          environment:
+            GH_TOKEN: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+
+        - name: Wait for deployment to start
+          pause:
+            seconds: "{{ service_stabilization_wait }}"
+
+        - name: Monitor deployment progress
+          shell: |
+            aws ecs describe-services \
+              --cluster {{ cluster_name }} \
+              --services {{ environment }}-{{ item.name }}-service \
+              --region {{ aws_region }} \
+              --query 'services[0].[deployments[0].status,runningCount,desiredCount]' \
+              --output text
+          register: deploy_status
+          loop: "{{ services }}"
+          until: deploy_status.stdout.split()[1] == deploy_status.stdout.split()[2]
+          retries: 20
+          delay: 30
+          changed_when: false
+
+- name: Run Database Migrations
+  import_playbook: run-migrations.yml
+  tags: [migrations]
+
+- name: Validate Deployment
+  import_playbook: validate-deployment.yml
+  tags: [validate]
+
+- name: Post-Deployment Summary
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Get ALB DNS
+      shell: |
+        cd ../../terraform
+        terraform output -raw alb_dns_name
+      register: alb_dns
+      changed_when: false
+
+    - name: Final Summary
+      debug:
+        msg: |
+          ================================================================
+          DEPLOYMENT COMPLETE - {{ environment | upper }}
+          ================================================================
+
+          Environment: {{ environment }}
+          Cluster: {{ hostvars['localhost'].cluster_name }}
+          ALB: {{ alb_dns.stdout }}
+
+          Services deployed:
+          {% for svc in hostvars['localhost'].services %}
+          ✓ {{ svc.name }} (port {{ svc.port }})
+          {% endfor %}
+
+          Health endpoints:
+          {% for svc in hostvars['localhost'].services %}
+          - http://{{ alb_dns.stdout }}/{{ svc.name }}/health
+          {% endfor %}
+
+          Monitoring:
+          - CloudWatch Logs: aws logs tail /ecs/{{ environment }}-<service> --follow
+          - ECS Console: https://console.aws.amazon.com/ecs/home?region={{ aws_region }}#/clusters/{{ hostvars['localhost'].cluster_name }}
+
+          Next steps:
+          1. Run integration tests
+          2. Monitor application logs
+          3. Set up CloudWatch alarms
+          4. Update DNS/domain settings if needed

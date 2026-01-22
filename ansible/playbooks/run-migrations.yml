@@ -1,0 +1,88 @@
+---
+# Run database migrations for all services
+# Usage: ansible-playbook -i inventory/staging.yml playbooks/run-migrations.yml
+
+- name: Run Database Migrations
+  hosts: localhost
+  gather_facts: no
+
+  vars:
+    services_with_migrations:
+      - home-manager
+      - vehicle-manager
+      - meal-planner
+
+  tasks:
+    - name: Check if services repo is checked out
+      stat:
+        path: ../../../services
+      register: services_dir
+
+    - name: Fail if services directory not found
+      fail:
+        msg: "Services directory not found at ../../../services"
+      when: not services_dir.stat.exists
+
+    - name: Get DATABASE_URL from Secrets Manager for each service
+      amazon.aws.secretsmanager_secret_info:
+        name: "{{ environment }}/{{ item }}/database_url"
+        region: "{{ aws_region }}"
+      register: db_secrets
+      loop: "{{ services_with_migrations }}"
+
+    - name: Display migration plan
+      debug:
+        msg: |
+          ================================================================
+          Database Migration Plan for {{ environment }}
+          ================================================================
+
+          Services to migrate:
+          {% for service in services_with_migrations %}
+          - {{ service }}
+          {% endfor %}
+
+          Migration will run from: ../../../services/<service>/migrate_db.py
+
+    - name: Run migrations for each service
+      shell: |
+        cd ../../../services/{{ item }}
+        export DATABASE_URL="{{ lookup('amazon.aws.aws_secret', environment + '/' + item + '/database_url', region=aws_region) }}"
+        python3 migrate_db.py
+      register: migration_results
+      loop: "{{ services_with_migrations }}"
+      environment:
+        PYTHONPATH: "../../../services"
+
+    - name: Display migration results
+      debug:
+        msg: |
+          Service: {{ item.item }}
+          Status: {{ 'SUCCESS' if item.rc == 0 else 'FAILED' }}
+          Output:
+          {{ item.stdout }}
+          {% if item.stderr %}
+          Errors:
+          {{ item.stderr }}
+          {% endif %}
+      loop: "{{ migration_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check for failed migrations
+      fail:
+        msg: "Some migrations failed. Check output above."
+      when: migration_results.results | selectattr('rc', 'ne', 0) | list | length > 0
+
+    - name: Migration Summary
+      debug:
+        msg: |
+          ================================================================
+          Migration Summary for {{ environment }}
+          ================================================================
+
+          Total services: {{ services_with_migrations | length }}
+          Successful: {{ migration_results.results | selectattr('rc', 'equalto', 0) | list | length }}
+          Failed: {{ migration_results.results | selectattr('rc', 'ne', 0) | list | length }}
+
+          All migrations completed successfully!

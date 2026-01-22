@@ -1,0 +1,129 @@
+name: Deploy with Ansible
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: 'staging'
+      playbook:
+        description: 'Playbook to run'
+        required: true
+        type: choice
+        options:
+          - deploy-all
+          - setup-secrets
+          - run-migrations
+          - validate-deployment
+          - rollback
+        default: 'deploy-all'
+      repo_ref:
+        description: 'Repository ref to deploy'
+        required: false
+        default: 'main'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  ansible-deployment:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout infrastructure repo
+        uses: actions/checkout@v4
+
+      - name: Checkout services repo
+        uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ inputs.repo_ref }}
+          path: services-repo
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Ansible and dependencies
+        run: |
+          cd ansible
+          pip install -r requirements.txt
+
+      - name: Install Ansible collections
+        run: |
+          cd ansible
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install GitHub CLI
+        run: |
+          type -p curl >/dev/null || (sudo apt update && sudo apt install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
+
+      - name: Authenticate GitHub CLI
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          echo "${{ secrets.PAT_TOKEN }}" | gh auth login --with-token
+
+      - name: Run Ansible playbook
+        working-directory: ansible
+        env:
+          ANSIBLE_FORCE_COLOR: "1"
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          ansible-playbook \
+            -i inventory/${{ inputs.environment }}.yml \
+            playbooks/${{ inputs.playbook }}.yml \
+            -v
+
+      - name: Upload Ansible logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ansible-logs-${{ inputs.environment }}-${{ github.run_number }}
+          path: ansible/ansible.log
+          retention-days: 30
+
+      - name: Deployment Summary
+        if: success()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Playbook**: ${{ inputs.playbook }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ref**: ${{ inputs.repo_ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
+
+      - name: Failure Summary
+        if: failure()
+        run: |
+          echo "## Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Playbook**: ${{ inputs.playbook }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ❌ Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the Ansible logs artifact for details." >> $GITHUB_STEP_SUMMARY

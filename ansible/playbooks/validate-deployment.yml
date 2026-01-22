@@ -1,0 +1,181 @@
+---
+# Validate ECS deployment health and connectivity
+# Usage: ansible-playbook -i inventory/staging.yml playbooks/validate-deployment.yml
+
+- name: Validate Deployment
+  hosts: ecs_services
+  gather_facts: no
+
+  tasks:
+    - name: Get ALB DNS from Terraform
+      shell: |
+        cd ../../terraform
+        terraform output -raw alb_dns_name || echo ""
+      register: tf_alb_dns
+      changed_when: false
+      failed_when: false
+
+    - name: Set ALB endpoint
+      set_fact:
+        alb_endpoint: "{{ tf_alb_dns.stdout if tf_alb_dns.stdout != '' else 'localhost' }}"
+
+    - name: Display validation info
+      debug:
+        msg: |
+          ================================================================
+          Deployment Validation for {{ environment }}
+          ================================================================
+
+          Cluster: {{ cluster_name }}
+          ALB: {{ alb_endpoint }}
+          Services to validate: {{ services | map(attribute='name') | list | join(', ') }}
+
+    - name: Check ECS service status
+      shell: |
+        aws ecs describe-services \
+          --cluster {{ cluster_name }} \
+          --services {{ environment }}-{{ item.name }}-service \
+          --region {{ aws_region }} \
+          --query 'services[0].[serviceName,status,runningCount,desiredCount]' \
+          --output json
+      register: service_status
+      loop: "{{ services }}"
+      changed_when: false
+
+    - name: Parse service status
+      set_fact:
+        service_health: "{{ service_health | default([]) + [{'name': item.item.name, 'status': item.stdout | from_json}] }}"
+      loop: "{{ service_status.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Display service status
+      debug:
+        msg: |
+          Service: {{ item.name }}
+          Status: {{ item.status[1] }}
+          Running: {{ item.status[2] }} / {{ item.status[3] }}
+      loop: "{{ service_health }}"
+
+    - name: Check for unhealthy services
+      set_fact:
+        unhealthy_services: "{{ service_health | selectattr('status.1', 'ne', 'ACTIVE') | list }}"
+
+    - name: Fail if services are unhealthy
+      fail:
+        msg: "Unhealthy services detected: {{ unhealthy_services | map(attribute='name') | join(', ') }}"
+      when: unhealthy_services | length > 0
+
+    - name: Test health endpoints
+      uri:
+        url: "http://{{ alb_endpoint }}/{{ item.name }}/health"
+        method: GET
+        status_code: 200
+        timeout: "{{ health_check_timeout }}"
+      register: health_checks
+      loop: "{{ services }}"
+      retries: "{{ health_check_retries }}"
+      delay: 5
+      until: health_checks is succeeded
+      ignore_errors: yes
+
+    - name: Display health check results
+      debug:
+        msg: |
+          Service: {{ item.item.name }}
+          Health Endpoint: http://{{ alb_endpoint }}/{{ item.item.name }}/health
+          Status: {{ item.status if item.status is defined else 'FAILED' }}
+          Response: {{ item.json if item.json is defined else 'No response' }}
+      loop: "{{ health_checks.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Check for failed health checks
+      set_fact:
+        failed_health_checks: "{{ health_checks.results | selectattr('failed', 'defined') | selectattr('failed', 'equalto', true) | list }}"
+
+    - name: Display failed health checks
+      debug:
+        msg: "Failed health checks: {{ failed_health_checks | map(attribute='item.name') | list }}"
+      when: failed_health_checks | length > 0
+
+    - name: Test Artemis integration
+      block:
+        - name: Test Artemis dashboard
+          uri:
+            url: "http://{{ alb_endpoint }}/artemis/dashboard/summary"
+            method: GET
+            status_code: 200
+            timeout: "{{ health_check_timeout }}"
+          register: artemis_dashboard
+
+        - name: Display Artemis dashboard response
+          debug:
+            msg: |
+              Artemis Dashboard Summary:
+              Modules: {{ artemis_dashboard.json.modules | length if artemis_dashboard.json.modules is defined else 0 }}
+              {% if artemis_dashboard.json.modules is defined %}
+              {% for module in artemis_dashboard.json.modules %}
+              - {{ module.name }}: {{ module.healthy | default('unknown') }}
+              {% endfor %}
+              {% endif %}
+      when: "'artemis' in (services | map(attribute='name') | list)"
+      ignore_errors: yes
+
+    - name: Get CloudWatch log streams
+      shell: |
+        aws logs describe-log-streams \
+          --log-group-name /ecs/{{ environment }}-{{ item.name }} \
+          --order-by LastEventTime \
+          --descending \
+          --max-items 1 \
+          --region {{ aws_region }} \
+          --query 'logStreams[0].logStreamName' \
+          --output text 2>/dev/null || echo "none"
+      register: log_streams
+      loop: "{{ services }}"
+      changed_when: false
+
+    - name: Display log stream info
+      debug:
+        msg: |
+          Service: {{ item.item.name }}
+          Log Group: /ecs/{{ environment }}-{{ item.item.name }}
+          Latest Stream: {{ item.stdout }}
+
+          View logs with:
+          aws logs tail /ecs/{{ environment }}-{{ item.item.name }} --follow --region {{ aws_region }}
+      loop: "{{ log_streams.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Validation Summary
+      debug:
+        msg: |
+          ================================================================
+          Validation Summary for {{ environment }}
+          ================================================================
+
+          Environment: {{ environment }}
+          Cluster: {{ cluster_name }}
+          ALB: {{ alb_endpoint }}
+
+          Service Status:
+          {% for svc in service_health %}
+          ✓ {{ svc.name }}: {{ svc.status[1] }} ({{ svc.status[2] }}/{{ svc.status[3] }})
+          {% endfor %}
+
+          Health Checks:
+          Passed: {{ (health_checks.results | selectattr('status', 'defined') | list | length) }}
+          Failed: {{ failed_health_checks | length }}
+
+          {% if failed_health_checks | length == 0 %}
+          ✓ All validations passed!
+          {% else %}
+          ✗ Some health checks failed. Review output above.
+          {% endif %}
+
+          Next steps:
+          1. View logs: aws logs tail /ecs/{{ environment }}-<service> --follow
+          2. Test endpoints: curl http://{{ alb_endpoint }}/<service>/health
+          3. Monitor: aws ecs describe-services --cluster {{ cluster_name }}

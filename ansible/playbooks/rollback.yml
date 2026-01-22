@@ -1,0 +1,195 @@
+---
+# Rollback services to previous task definition
+# Usage: ansible-playbook -i inventory/staging.yml playbooks/rollback.yml -e "service_name=artemis"
+
+- name: Rollback Service
+  hosts: ecs_services
+  gather_facts: no
+
+  vars_prompt:
+    - name: service_name
+      prompt: "Enter service name to rollback (or 'all' for all services)"
+      private: no
+
+    - name: revision
+      prompt: "Enter task definition revision to rollback to (or 'previous' for auto-detect)"
+      private: no
+      default: "previous"
+
+  tasks:
+    - name: Set services to rollback
+      set_fact:
+        services_to_rollback: "{{ services if service_name == 'all' else services | selectattr('name', 'equalto', service_name) | list }}"
+
+    - name: Verify service selection
+      fail:
+        msg: "Service '{{ service_name }}' not found in inventory"
+      when: services_to_rollback | length == 0
+
+    - name: Display rollback plan
+      debug:
+        msg: |
+          ================================================================
+          ROLLBACK PLAN
+          ================================================================
+
+          Environment: {{ environment }}
+          Cluster: {{ cluster_name }}
+          Services: {{ services_to_rollback | map(attribute='name') | join(', ') }}
+          Revision: {{ revision }}
+
+          WARNING: This will rollback to a previous version!
+
+    - name: Confirm rollback
+      pause:
+        prompt: "Proceed with rollback? (yes/no)"
+      register: confirm
+
+    - name: Abort if not confirmed
+      fail:
+        msg: "Rollback cancelled by user"
+      when: confirm.user_input | lower != 'yes'
+
+    - name: Get current task definition for each service
+      shell: |
+        aws ecs describe-services \
+          --cluster {{ cluster_name }} \
+          --services {{ environment }}-{{ item.name }}-service \
+          --region {{ aws_region }} \
+          --query 'services[0].taskDefinition' \
+          --output text
+      register: current_task_defs
+      loop: "{{ services_to_rollback }}"
+      changed_when: false
+
+    - name: Display current versions
+      debug:
+        msg: |
+          Service: {{ item.item.name }}
+          Current: {{ item.stdout }}
+      loop: "{{ current_task_defs.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Get task definition revisions
+      shell: |
+        aws ecs list-task-definitions \
+          --family-prefix {{ environment }}-{{ item.name }} \
+          --region {{ aws_region }} \
+          --sort DESC \
+          --max-items 5 \
+          --query 'taskDefinitionArns' \
+          --output json
+      register: task_def_revisions
+      loop: "{{ services_to_rollback }}"
+      changed_when: false
+
+    - name: Determine rollback revision
+      set_fact:
+        rollback_revisions: >-
+          {{
+            rollback_revisions | default([]) +
+            [{
+              'name': item.item.name,
+              'revision': (item.stdout | from_json)[1] if revision == 'previous' else environment + '-' + item.item.name + ':' + revision
+            }]
+          }}
+      loop: "{{ task_def_revisions.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Display rollback targets
+      debug:
+        msg: |
+          Service: {{ item.name }}
+          Rollback to: {{ item.revision }}
+      loop: "{{ rollback_revisions }}"
+
+    - name: Perform rollback
+      shell: |
+        aws ecs update-service \
+          --cluster {{ cluster_name }} \
+          --service {{ environment }}-{{ item.name }}-service \
+          --task-definition {{ item.revision }} \
+          --force-new-deployment \
+          --region {{ aws_region }}
+      register: rollback_results
+      loop: "{{ rollback_revisions }}"
+
+    - name: Wait for services to stabilize
+      shell: |
+        aws ecs wait services-stable \
+          --cluster {{ cluster_name }} \
+          --services {{ environment }}-{{ item.name }}-service \
+          --region {{ aws_region }}
+      register: stabilize_results
+      loop: "{{ rollback_revisions }}"
+      async: "{{ deployment_wait_timeout }}"
+      poll: 10
+
+    - name: Verify rollback
+      shell: |
+        aws ecs describe-services \
+          --cluster {{ cluster_name }} \
+          --services {{ environment }}-{{ item.name }}-service \
+          --region {{ aws_region }} \
+          --query 'services[0].[serviceName,status,runningCount,desiredCount,taskDefinition]' \
+          --output json
+      register: verify_results
+      loop: "{{ rollback_revisions }}"
+      changed_when: false
+
+    - name: Display rollback results
+      debug:
+        msg: |
+          Service: {{ item.item.name }}
+          Status: {{ (item.stdout | from_json)[1] }}
+          Running: {{ (item.stdout | from_json)[2] }}/{{ (item.stdout | from_json)[3] }}
+          Task Definition: {{ (item.stdout | from_json)[4] }}
+      loop: "{{ verify_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Test health after rollback
+      uri:
+        url: "http://{{ lookup('pipe', 'cd ../../terraform && terraform output -raw alb_dns_name') }}/{{ item.name }}/health"
+        method: GET
+        status_code: 200
+        timeout: "{{ health_check_timeout }}"
+      register: health_results
+      loop: "{{ rollback_revisions }}"
+      retries: "{{ health_check_retries }}"
+      delay: 5
+      ignore_errors: yes
+
+    - name: Rollback Summary
+      debug:
+        msg: |
+          ================================================================
+          ROLLBACK SUMMARY
+          ================================================================
+
+          Environment: {{ environment }}
+          Services rolled back: {{ rollback_revisions | length }}
+
+          Results:
+          {% for svc in verify_results.results %}
+          {% set svc_data = svc.stdout | from_json %}
+          ✓ {{ svc_data[0] }}: {{ svc_data[1] }} ({{ svc_data[2] }}/{{ svc_data[3] }})
+          {% endfor %}
+
+          Health Checks:
+          {% for health in health_results.results %}
+          {% if health.status is defined and health.status == 200 %}
+          ✓ {{ health.item.name }}: Healthy
+          {% else %}
+          ✗ {{ health.item.name }}: Failed
+          {% endif %}
+          {% endfor %}
+
+          {% if health_results.results | selectattr('failed', 'defined') | selectattr('failed', 'equalto', true) | list | length > 0 %}
+          WARNING: Some health checks failed after rollback.
+          Check logs: aws logs tail /ecs/{{ environment }}-<service> --follow
+          {% else %}
+          Rollback completed successfully!
+          {% endif %}
