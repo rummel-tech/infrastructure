@@ -15,6 +15,17 @@ enable_vpc_flow_logs = true   # Enable for security compliance
 
 # Application Configuration - Production optimized
 applications = {
+  artemis = {
+    enabled           = true
+    port              = 8000
+    cpu               = 512
+    memory            = 1024
+    desired_count     = 2      # Minimum 2 for high availability
+    min_capacity      = 2
+    max_capacity      = 10
+    health_check_path = "/health"
+    repository        = "rummel-tech/services"
+  }
   workout-planner = {
     enabled           = true
     port              = 8000

@@ -71,6 +71,17 @@ variable "applications" {
     repository       = string
   }))
   default = {
+    artemis = {
+      enabled          = true
+      port             = 8000
+      cpu              = 512
+      memory           = 1024
+      desired_count    = 2
+      min_capacity     = 1
+      max_capacity     = 10
+      health_check_path = "/health"
+      repository       = "rummel-tech/services"
+    }
     workout-planner = {
       enabled          = true
       port             = 8000

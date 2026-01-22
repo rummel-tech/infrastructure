@@ -15,6 +15,17 @@ enable_vpc_flow_logs = false
 
 # Application Configuration - Staging optimized
 applications = {
+  artemis = {
+    enabled           = true
+    port              = 8000
+    cpu               = 256    # Reduced for staging
+    memory            = 512    # Reduced for staging
+    desired_count     = 1      # Single instance for staging
+    min_capacity      = 1
+    max_capacity      = 2
+    health_check_path = "/health"
+    repository        = "rummel-tech/services"
+  }
   workout-planner = {
     enabled           = true
     port              = 8000
