@@ -17,7 +17,7 @@ enable_vpc_flow_logs = true   # Enable for security compliance
 applications = {
   artemis = {
     enabled           = true
-    port              = 8000
+    port              = 8080
     cpu               = 512
     memory            = 1024
     desired_count     = 2      # Minimum 2 for high availability
@@ -67,6 +67,17 @@ applications = {
     desired_count     = 2
     min_capacity      = 2
     max_capacity      = 10
+    health_check_path = "/health"
+    repository        = "rummel-tech/services"
+  }
+  auth = {
+    enabled           = true
+    port              = 8090
+    cpu               = 256    # Auth is lightweight
+    memory            = 512
+    desired_count     = 2      # HA — every other service depends on this
+    min_capacity      = 2
+    max_capacity      = 6
     health_check_path = "/health"
     repository        = "rummel-tech/services"
   }
