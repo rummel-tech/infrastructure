@@ -33,6 +33,16 @@
         {
           "name": "CORS_ORIGINS",
           "value": "https://rummel-tech.github.io,https://home-manager.rummel.tech"
+        },
+        {
+          "name": "ARTEMIS_AUTH_URL",
+          "value": "http://auth:8090"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:901746942632:secret:home-manager/database-url"
         }
       ],
       "logConfiguration": {

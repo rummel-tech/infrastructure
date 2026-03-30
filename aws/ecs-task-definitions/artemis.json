@@ -1,26 +1,26 @@
 {
-  "family": "meal-planner",
+  "family": "artemis",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "256",
-  "memory": "512",
+  "cpu": "512",
+  "memory": "1024",
   "executionRoleArn": "arn:aws:iam::{ACCOUNT_ID}:role/ecsTaskExecutionRole",
   "taskRoleArn": "arn:aws:iam::{ACCOUNT_ID}:role/ecsTaskRole",
   "containerDefinitions": [
     {
-      "name": "meal-planner",
-      "image": "{ECR_REGISTRY}/meal-planner:latest",
+      "name": "artemis",
+      "image": "{ECR_REGISTRY}/artemis:latest",
       "essential": true,
       "portMappings": [
         {
-          "containerPort": 8010,
+          "containerPort": 8080,
           "protocol": "tcp"
         }
       ],
       "environment": [
         {
           "name": "PORT",
-          "value": "8010"
+          "value": "8080"
         },
         {
           "name": "ENVIRONMENT",
@@ -31,35 +31,51 @@
           "value": "info"
         },
         {
-          "name": "CORS_ORIGINS",
-          "value": "https://rummel-tech.github.io,https://meal-planner.rummel.tech"
-        },
-        {
           "name": "ARTEMIS_AUTH_URL",
           "value": "http://auth:8090"
         },
         {
           "name": "WORKOUT_PLANNER_URL",
           "value": "http://workout-planner:8000"
+        },
+        {
+          "name": "MEAL_PLANNER_URL",
+          "value": "http://meal-planner:8010"
+        },
+        {
+          "name": "HOME_MANAGER_URL",
+          "value": "http://home-manager:8020"
+        },
+        {
+          "name": "VEHICLE_MANAGER_URL",
+          "value": "http://vehicle-manager:8030"
+        },
+        {
+          "name": "CORS_ORIGINS",
+          "value": "https://rummel-tech.github.io"
         }
       ],
       "secrets": [
         {
-          "name": "DATABASE_URL",
-          "valueFrom": "arn:aws:secretsmanager:us-east-1:901746942632:secret:meal-planner/database-url"
+          "name": "ANTHROPIC_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:901746942632:secret:artemis/anthropic-api-key"
+        },
+        {
+          "name": "GITHUB_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:901746942632:secret:artemis/github-token"
         }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/meal-planner",
+          "awslogs-group": "/ecs/artemis",
           "awslogs-region": "us-east-1",
           "awslogs-stream-prefix": "ecs",
           "awslogs-create-group": "true"
         }
       },
       "healthCheck": {
-        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8010/health')\" || exit 1"],
+        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"],
         "interval": 30,
         "timeout": 5,
         "retries": 3,
