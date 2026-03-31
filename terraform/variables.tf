@@ -126,6 +126,28 @@ variable "applications" {
       health_check_path = "/health"
       repository       = "rummel-tech/services"
     }
+    work-planner = {
+      enabled          = true
+      port             = 8040
+      cpu              = 512
+      memory           = 1024
+      desired_count    = 2
+      min_capacity     = 1
+      max_capacity     = 10
+      health_check_path = "/health"
+      repository       = "rummel-tech/services"
+    }
+    education-planner = {
+      enabled          = true
+      port             = 8050
+      cpu              = 512
+      memory           = 1024
+      desired_count    = 2
+      min_capacity     = 1
+      max_capacity     = 10
+      health_check_path = "/health"
+      repository       = "rummel-tech/services"
+    }
   }
 }
 
