@@ -82,7 +82,7 @@ module "ecs_services" {
 
   # Container configuration
   ecr_repository_url = aws_ecr_repository.apps[each.key].repository_url
-  image_tag          = "latest"
+  image_tag          = var.default_image_tag
   container_port     = each.value.port
   cpu                = each.value.cpu
   memory             = each.value.memory
@@ -112,6 +112,7 @@ module "ecs_services" {
     CORS_ORIGINS   = var.domain_name != "" ? "https://${each.key}.${var.domain_name}" : "*"
     REDIS_ENABLED  = "false"
     APP_NAME       = each.key
+    API_PREFIX     = "/${each.key}"
   }
 
   # Secrets from Secrets Manager

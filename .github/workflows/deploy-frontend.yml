@@ -38,6 +38,11 @@ on:
           - meal-planner
           - home-manager
           - vehicle-manager
+          - education-planner
+          - content-planner
+          - focus-training
+          - investment-manager
+          - artemis
       environment:
         description: 'Target environment'
         required: true

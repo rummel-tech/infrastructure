@@ -1,0 +1,313 @@
+github_org: rummel-tech
+repos:
+- services
+- infrastructure
+- test-app
+backend_services:
+- name: artemis
+  repo: services
+  description: Core Artemis platform API and module orchestrator
+  language: python
+  framework: fastapi
+  port: 8080
+  has_tests: true
+  frontend: artemis_mobile
+- name: auth
+  repo: services
+  description: Centralized JWT authentication (RS256/HS256)
+  language: python
+  framework: fastapi
+  port: 8090
+  has_tests: true
+  frontend: artemis_mobile
+- name: workout-planner
+  repo: services
+  description: AI-powered fitness coaching backend
+  language: python
+  framework: fastapi
+  port: 8000
+  has_tests: true
+  frontend: workout_planner
+- name: meal-planner
+  repo: services
+  description: Meal planning and nutrition tracking backend
+  language: python
+  framework: fastapi
+  port: 8010
+  has_tests: true
+  frontend: meals_app
+- name: home-manager
+  repo: services
+  description: Home management and maintenance tracking backend
+  language: python
+  framework: fastapi
+  port: 8020
+  has_tests: true
+  frontend: home_app
+- name: vehicle-manager
+  repo: services
+  description: Vehicle management and maintenance backend
+  language: python
+  framework: fastapi
+  port: 8030
+  has_tests: true
+  frontend: vehicle_app
+- name: work-planner
+  repo: services
+  description: Corporate and entrepreneurial work planning backend
+  language: python
+  framework: fastapi
+  port: 8040
+  has_tests: false
+  frontend: artemis_work_planner
+- name: education-planner
+  repo: services
+  description: Education goals and weekly activity planning backend
+  language: python
+  framework: fastapi
+  port: 8050
+  has_tests: false
+  frontend: education_planner
+- name: content-planner
+  repo: services
+  description: Audio-first content consumption backend
+  language: python
+  framework: fastapi
+  port: 8060
+  has_tests: false
+  frontend: content_planner
+flutter_apps:
+- name: artemis_mobile
+  repo: artemis_mobile
+  description: Unified Artemis Personal OS shell
+  platforms:
+  - web
+  - ios
+  - android
+  backend: artemis
+  depends_on:
+  - shared_services
+  - rummel_blue_theme
+  has_tests: true
+- name: artemis_app
+  repo: artemis_app
+  description: Legacy Artemis shell (to be deprecated)
+  platforms:
+  - ios
+  backend: null
+  depends_on: []
+  has_tests: true
+- name: infrastructure_dashboard
+  repo: infrastructure
+  description: Platform management — secrets, builds, services, catalog
+  platforms:
+  - web
+  - ios
+  - android
+  backend: infrastructure-api
+  depends_on:
+  - rummel_blue_theme
+  has_tests: true
+- name: workout_planner
+  repo: workout-planner
+  description: AI-powered fitness coaching app
+  platforms:
+  - web
+  - ios
+  - android
+  - linux
+  backend: workout-planner
+  depends_on:
+  - rummel_blue_theme
+  has_tests: true
+- name: artemis_work_planner
+  repo: work-planner
+  description: Work planning for corporate and entrepreneurial endeavors
+  platforms:
+  - web
+  - ios
+  - android
+  - linux
+  - macos
+  - windows
+  backend: work-planner
+  depends_on:
+  - rummel_blue_theme
+  has_tests: true
+- name: content_planner
+  repo: content-planner
+  description: Intentional audio-first content consumption
+  platforms:
+  - web
+  - ios
+  - linux
+  backend: content-planner
+  depends_on: []
+  has_tests: true
+- name: education_planner
+  repo: education-planner
+  description: Education goals and weekly activity plans
+  platforms:
+  - web
+  - ios
+  - linux
+  backend: education-planner
+  depends_on: []
+  has_tests: true
+- name: focus_training
+  repo: focus-training
+  description: Gamified focus training with XP, levels, and achievements
+  platforms:
+  - web
+  - ios
+  backend: null
+  depends_on:
+  - rummel_blue_theme
+  has_tests: true
+- name: meals_app
+  repo: meal-planner
+  description: Meal planning application
+  platforms:
+  - web
+  - ios
+  backend: meal-planner
+  depends_on:
+  - rummel_blue_theme
+  - shared_services
+  - meals_ui
+  has_tests: true
+- name: home_app
+  repo: home-manager
+  description: Home management application
+  platforms:
+  - web
+  - ios
+  backend: home-manager
+  depends_on:
+  - rummel_blue_theme
+  - shared_services
+  - home_ui
+  has_tests: true
+- name: vehicle_app
+  repo: vehicle-manager
+  description: Vehicle management application
+  platforms:
+  - web
+  - ios
+  backend: vehicle-manager
+  depends_on:
+  - rummel_blue_theme
+  - shared_services
+  - vehicle_ui
+  has_tests: true
+- name: investment_manager
+  repo: investment-manager
+  description: Portfolio tracking, analysis, and tax insights
+  platforms:
+  - web
+  - ios
+  backend: null
+  depends_on:
+  - rummel_blue_theme
+  has_tests: true
+shared_packages:
+- name: services-common
+  repo: services
+  description: FastAPI utilities, auth, logging, metrics, database helpers
+  language: python
+  version: 0.2.0
+  consumers:
+  - artemis
+  - auth
+  - workout-planner
+  - meal-planner
+  - home-manager
+  - vehicle-manager
+  - work-planner
+  - education-planner
+  - content-planner
+- name: rummel_blue_theme
+  repo: rummel_blue_theme
+  description: Unified design system with theme, colors, and assets
+  language: dart
+  version: 1.0.0
+  consumers:
+  - infrastructure_dashboard
+  - focus_training
+  - investment_manager
+  - meals_app
+  - home_app
+  - vehicle_app
+  - workout_planner
+  - artemis_mobile
+  - artemis_work_planner
+- name: shared_services
+  repo: shared_services
+  description: API client, auth, token storage, validation, logging
+  language: dart
+  version: 0.1.0
+  consumers:
+  - artemis_mobile
+  - meals_app
+  - home_app
+  - vehicle_app
+- name: meals_ui
+  repo: meal-planner
+  description: Meal planner UI components and screens
+  language: dart
+  version: 0.0.1
+  consumers:
+  - meals_app
+- name: home_ui
+  repo: home-manager
+  description: Home manager UI components and screens
+  language: dart
+  version: 0.0.1
+  consumers:
+  - home_app
+- name: vehicle_ui
+  repo: vehicle-manager
+  description: Vehicle manager UI components and screens
+  language: dart
+  version: 0.0.1
+  consumers:
+  - vehicle_app
+infrastructure:
+  terraform:
+    repo: infrastructure
+    modules:
+    - ecs-service
+    - frontend
+    environments:
+    - staging
+    - production
+    resources:
+    - VPC
+    - ALB
+    - ECS Fargate Cluster
+    - RDS PostgreSQL 15
+    - ECR Repositories
+    - S3 + CloudFront (frontends)
+    - CloudWatch Logs
+    - IAM Roles
+    - Security Groups
+    - Secrets Manager
+  ansible:
+    repo: infrastructure
+    playbooks:
+    - deploy-all
+    - rollback
+    - run-migrations
+    - setup-secrets
+    - validate-deployment
+  ci_cd:
+    total_workflows: 30
+    categories:
+      deploy_backend: 6
+      deploy_frontend: 5
+      deploy_other: 3
+      test: 4
+      security_scan: 6
+      ci: 3
+      infra: 1
+      validate: 2

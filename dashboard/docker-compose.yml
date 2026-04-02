@@ -1,0 +1,17 @@
+services:
+  dashboard:
+    build: .
+    ports:
+      - "8888:8888"
+    environment:
+      DASHBOARD_AWS_REGION: ${AWS_REGION:-us-east-1}
+      DASHBOARD_GITHUB_TOKEN: ${GITHUB_TOKEN}
+      DASHBOARD_GITHUB_ORG: ${GITHUB_ORG:-rummel-tech}
+      DASHBOARD_ENVIRONMENT: ${ENVIRONMENT:-staging}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+    volumes:
+      - ~/.aws:/root/.aws:ro
+    restart: unless-stopped

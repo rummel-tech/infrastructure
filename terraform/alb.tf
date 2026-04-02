@@ -227,7 +227,7 @@ resource "aws_lb_listener_rule" "apps_https" {
 
   condition {
     path_pattern {
-      values = ["/api/${each.key}/*", "/api/${each.key}"]
+      values = ["/${each.key}/*", "/${each.key}"]
     }
   }
 
@@ -256,7 +256,7 @@ resource "aws_lb_listener_rule" "apps_http" {
 
   condition {
     path_pattern {
-      values = ["/api/${each.key}/*", "/api/${each.key}"]
+      values = ["/${each.key}/*", "/${each.key}"]
     }
   }
 }

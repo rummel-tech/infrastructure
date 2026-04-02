@@ -71,9 +71,20 @@ variable "applications" {
     repository       = string
   }))
   default = {
+    auth = {
+      enabled          = true
+      port             = 8090
+      cpu              = 256
+      memory           = 512
+      desired_count    = 2
+      min_capacity     = 1
+      max_capacity     = 5
+      health_check_path = "/health"
+      repository       = "rummel-tech/services"
+    }
     artemis = {
       enabled          = true
-      port             = 8000
+      port             = 8080
       cpu              = 512
       memory           = 1024
       desired_count    = 2
@@ -140,6 +151,17 @@ variable "applications" {
     education-planner = {
       enabled          = true
       port             = 8050
+      cpu              = 512
+      memory           = 1024
+      desired_count    = 2
+      min_capacity     = 1
+      max_capacity     = 10
+      health_check_path = "/health"
+      repository       = "rummel-tech/services"
+    }
+    content-planner = {
+      enabled          = true
+      port             = 8060
       cpu              = 512
       memory           = 1024
       desired_count    = 2
@@ -232,6 +254,12 @@ variable "frontend_certificate_arn" {
 # =============================================================================
 # Tags
 # =============================================================================
+
+variable "default_image_tag" {
+  description = "Default Docker image tag for deployments (use git SHA or semver for reproducibility)"
+  type        = string
+  default     = "latest"
+}
 
 variable "tags" {
   description = "Common tags for all resources"

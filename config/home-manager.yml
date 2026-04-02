@@ -1,24 +1,20 @@
 app:
   name: home-manager
-  repository: rummel-tech/home-manager
+  repository: rummel-tech/services
 
 backend:
   port: 8020
-  dockerfile_path: backend/Dockerfile
-  working_directory: backend
+  dockerfile_path: home-manager/Dockerfile
+  working_directory: home-manager
 
 frontend:
   framework: flutter
-  working_directory: frontend/app/home_app
+  working_directory: modules/asset-managers/home-manager/frontend/app/home_app
   base_path: /
 
 aws:
   ecr_repository: home-manager
   ecs_service: home-manager-service
-  ecs_cluster: app-cluster
+  ecs_cluster: "${environment}-cluster"
   container_name: home-manager
   region: us-east-1
-
-github:
-  pages_enabled: true
-  base_url: https://rummel-tech.github.io/home-manager/

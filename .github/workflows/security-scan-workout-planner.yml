@@ -16,12 +16,14 @@ on:
     branches:
       - main
     paths:
-      - 'applications/backend/python_fastapi_server/**'
+      - 'workout-planner/**'
+      - 'common/**'
   pull_request:
     branches:
       - main
     paths:
-      - 'applications/backend/python_fastapi_server/**'
+      - 'workout-planner/**'
+      - 'common/**'
 
 permissions:
   contents: read
@@ -29,8 +31,8 @@ permissions:
   pull-requests: write    # For commenting on PRs
 
 env:
-  PYTHON_VERSION: '3.14'
-  WORKING_DIR: 'applications/backend/python_fastapi_server'
+  PYTHON_VERSION: '3.11'
+  WORKING_DIR: 'workout-planner'
 
 jobs:
   bandit-scan:
@@ -38,10 +40,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout workout-planner repo
+      - name: Checkout services repo
         uses: actions/checkout@v4
         with:
-          repository: rummel-tech/workout-planner
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
           path: app-repo
 
@@ -111,10 +114,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout workout-planner repo
+      - name: Checkout services repo
         uses: actions/checkout@v4
         with:
-          repository: rummel-tech/workout-planner
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
           path: app-repo
 
@@ -258,17 +262,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout workout-planner repo
+      - name: Checkout services repo
         uses: actions/checkout@v4
         with:
-          repository: rummel-tech/workout-planner
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
           path: app-repo
 
       - name: Build Docker image
-        working-directory: app-repo/${{ env.WORKING_DIR }}
+        working-directory: app-repo
         run: |
-          docker build -t workout-planner:scan .
+          docker build -f ${{ env.WORKING_DIR }}/Dockerfile -t workout-planner:scan .
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master

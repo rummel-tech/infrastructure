@@ -26,6 +26,10 @@ Thumbs.db
 # Meta/process documentation
 .meta/
 
+# Dashboard
+dashboard/__pycache__/
+dashboard/app/__pycache__/
+
 # Logs
 *.log
 logs/

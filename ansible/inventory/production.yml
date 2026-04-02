@@ -16,8 +16,12 @@ production:
       vars:
         cluster_name: production-cluster
         services:
+          - name: auth
+            port: 8090
+            desired_count: 2
+            needs_database: true
           - name: artemis
-            port: 8000
+            port: 8080
             desired_count: 2
             needs_database: false
           - name: home-manager
@@ -33,7 +37,19 @@ production:
             desired_count: 2
             needs_database: true
           - name: workout-planner
+            port: 8000
+            desired_count: 2
+            needs_database: true
+          - name: work-planner
             port: 8040
+            desired_count: 2
+            needs_database: true
+          - name: education-planner
+            port: 8050
+            desired_count: 2
+            needs_database: true
+          - name: content-planner
+            port: 8060
             desired_count: 2
             needs_database: true
 
@@ -56,6 +72,12 @@ production:
       vars:
         secret_prefix: production
         required_secrets:
+          - service: auth
+            secrets:
+              - database_url
+              - private_key
+              - public_key
+              - google_client_id
           - service: home-manager
             secrets:
               - database_url
@@ -69,3 +91,12 @@ production:
             secrets:
               - database_url
               - jwt_secret
+          - service: work-planner
+            secrets:
+              - database_url
+          - service: education-planner
+            secrets:
+              - database_url
+          - service: content-planner
+            secrets:
+              - database_url

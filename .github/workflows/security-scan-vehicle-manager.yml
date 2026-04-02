@@ -16,12 +16,14 @@ on:
     branches:
       - main
     paths:
-      - 'backend/**'
+      - 'vehicle-manager/**'
+      - 'common/**'
   pull_request:
     branches:
       - main
     paths:
-      - 'backend/**'
+      - 'vehicle-manager/**'
+      - 'common/**'
 
 permissions:
   contents: read
@@ -29,8 +31,8 @@ permissions:
   pull-requests: write
 
 env:
-  PYTHON_VERSION: '3.14'
-  WORKING_DIR: 'backend'
+  PYTHON_VERSION: '3.11'
+  WORKING_DIR: 'vehicle-manager'
   APP_NAME: 'vehicle-manager'
 
 jobs:
@@ -39,10 +41,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout vehicle-manager repo
+      - name: Checkout services repo
         uses: actions/checkout@v4
         with:
-          repository: rummel-tech/vehicle-manager
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
           path: app-repo
 
@@ -110,10 +113,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout vehicle-manager repo
+      - name: Checkout services repo
         uses: actions/checkout@v4
         with:
-          repository: rummel-tech/vehicle-manager
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
           path: app-repo
 
@@ -173,17 +177,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout vehicle-manager repo
+      - name: Checkout services repo
         uses: actions/checkout@v4
         with:
-          repository: rummel-tech/vehicle-manager
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
           path: app-repo
 
       - name: Build Docker image
-        working-directory: app-repo/${{ env.WORKING_DIR }}
+        working-directory: app-repo
         run: |
-          docker build -t ${{ env.APP_NAME }}:scan .
+          docker build -f ${{ env.WORKING_DIR }}/Dockerfile -t ${{ env.APP_NAME }}:scan .
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master

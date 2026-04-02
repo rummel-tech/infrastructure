@@ -10,7 +10,7 @@ infrastructure_repo: rummel-tech/infrastructure
 # Database configuration
 db_port: 5432
 db_engine: postgres
-db_engine_version: "14.7"
+db_engine_version: "15"
 
 # Common tags
 common_tags:
