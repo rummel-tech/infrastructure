@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../models/secret.dart';
+import '../models/required_secret.dart';
 import '../models/workflow_run.dart';
 import '../models/ecs_service.dart';
 import '../models/catalog_item.dart';
@@ -17,6 +18,12 @@ class DashboardProvider extends ChangeNotifier {
 
   List<Secret> _secrets = [];
   List<Secret> get secrets => _secrets;
+
+  List<RequiredSecret> _requiredSecrets = [];
+  List<RequiredSecret> get requiredSecrets => _requiredSecrets;
+
+  RequiredSecretsSummary? _requiredSecretsSummary;
+  RequiredSecretsSummary? get requiredSecretsSummary => _requiredSecretsSummary;
 
   List<EcsService> _services = [];
   List<EcsService> get services => _services;
@@ -116,6 +123,7 @@ class DashboardProvider extends ChangeNotifier {
 
     await Future.wait([
       loadSecrets(),
+      loadRequiredSecrets(),
       loadServices(),
       loadRuns(),
       loadCatalog(),
@@ -129,12 +137,29 @@ class DashboardProvider extends ChangeNotifier {
 
   Future<void> loadSecrets() async {
     try {
-      final data = await _api.get('/api/secrets',
-          params: {'environment': _environment});
+      // No environment filter — platform secrets use {service}/{key} naming,
+      // not an environment prefix. Filter by service via query param if needed.
+      final data = await _api.get('/api/secrets');
       final list = data['secrets'] as List? ?? [];
       _secrets = list.map((s) => Secret.fromJson(s)).toList();
     } catch (e) {
       _secrets = [];
+    }
+    notifyListeners();
+  }
+
+  Future<void> loadRequiredSecrets() async {
+    try {
+      final data = await _api.get('/api/secrets/required');
+      final list = data['secrets'] as List? ?? [];
+      _requiredSecrets = list.map((s) => RequiredSecret.fromJson(s)).toList();
+      final summary = data['summary'];
+      if (summary != null) {
+        _requiredSecretsSummary = RequiredSecretsSummary.fromJson(summary);
+      }
+    } catch (e) {
+      _requiredSecrets = [];
+      _requiredSecretsSummary = null;
     }
     notifyListeners();
   }
@@ -339,8 +364,8 @@ class DashboardProvider extends ChangeNotifier {
     required String value,
     String description = '',
   }) async {
+    // Creates as {service}/{key} — matching ECS task definition secret paths.
     return _api.post('/api/secrets', body: {
-      'environment': _environment,
       'service': service,
       'key': key,
       'value': value,

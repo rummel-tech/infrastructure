@@ -1,11 +1,275 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/required_secret.dart';
 import '../../providers/dashboard_provider.dart';
 import '../widgets/status_badge.dart';
 
 class SecretsScreen extends StatelessWidget {
   const SecretsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          toolbarHeight: 0,
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.checklist_rounded), text: 'Required'),
+              Tab(icon: Icon(Icons.key_rounded), text: 'All Secrets'),
+            ],
+          ),
+        ),
+        body: const TabBarView(
+          children: [
+            _RequiredSecretsTab(),
+            _AllSecretsTab(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Required Secrets Tab
+// ---------------------------------------------------------------------------
+
+class _RequiredSecretsTab extends StatelessWidget {
+  const _RequiredSecretsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<DashboardProvider>();
+    final required = provider.requiredSecrets;
+    final summary = provider.requiredSecretsSummary;
+    final theme = Theme.of(context);
+
+    final byService = <String, List<RequiredSecret>>{};
+    for (final s in required) {
+      byService.putIfAbsent(s.service, () => []).add(s);
+    }
+
+    return RefreshIndicator(
+      onRefresh: () => provider.loadRequiredSecrets(),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (summary != null) ...[
+            _SummaryBanner(summary: summary),
+            const SizedBox(height: 16),
+          ],
+          if (required.isEmpty && !provider.loading)
+            Center(
+              child: Column(
+                children: [
+                  const SizedBox(height: 40),
+                  Icon(Icons.cloud_off, size: 48, color: Colors.grey[600]),
+                  const SizedBox(height: 16),
+                  const Text('Could not load required secrets'),
+                  const SizedBox(height: 8),
+                  Text('Check AWS credentials in dashboard settings',
+                      style: TextStyle(color: Colors.grey[500])),
+                ],
+              ),
+            )
+          else
+            for (final entry in byService.entries) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 8, bottom: 4),
+                child: Text(entry.key,
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(color: theme.colorScheme.primary)),
+              ),
+              Card(
+                child: Column(
+                  children: [
+                    for (var i = 0; i < entry.value.length; i++) ...[
+                      _RequiredSecretTile(secret: entry.value[i]),
+                      if (i < entry.value.length - 1)
+                        const Divider(height: 1),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryBanner extends StatelessWidget {
+  final RequiredSecretsSummary summary;
+  const _SummaryBanner({required this.summary});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = summary.ready
+        ? Colors.green
+        : summary.missing > 0
+            ? theme.colorScheme.error
+            : Colors.orange;
+
+    return Card(
+      color: color.withOpacity(0.1),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(
+              summary.ready ? Icons.check_circle : Icons.warning_amber_rounded,
+              color: color,
+              size: 32,
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    summary.ready
+                        ? 'All secrets configured — ready for production'
+                        : 'Production secrets incomplete',
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(color: color, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${summary.set} set · '
+                    '${summary.placeholder} placeholder · '
+                    '${summary.missing} missing',
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RequiredSecretTile extends StatelessWidget {
+  final RequiredSecret secret;
+  const _RequiredSecretTile({required this.secret});
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, color, tooltip) = switch (secret.status) {
+      'set' => (Icons.check_circle, Colors.green, 'Set'),
+      'placeholder' => (Icons.warning_amber_rounded, Colors.orange, 'Placeholder — needs real value'),
+      _ => (Icons.cancel, Theme.of(context).colorScheme.error, 'Missing'),
+    };
+
+    return ListTile(
+      dense: true,
+      leading: Icon(icon, color: color, size: 20),
+      title: Text(
+        secret.key,
+        style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text(
+        secret.description,
+        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+      ),
+      trailing: IconButton(
+        icon: const Icon(Icons.edit_outlined, size: 18),
+        tooltip: secret.isMissing ? 'Create' : 'Update',
+        onPressed: () => _editSecret(context),
+      ),
+    );
+  }
+
+  void _editSecret(BuildContext context) {
+    final provider = context.read<DashboardProvider>();
+    final valueCtrl = TextEditingController();
+    final isCreating = secret.isMissing;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(isCreating ? 'Create ${secret.name}' : 'Update ${secret.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              secret.description,
+              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: valueCtrl,
+              decoration: InputDecoration(
+                labelText: 'Value',
+                hintText: secret.key.contains('pem')
+                    ? '-----BEGIN RSA PRIVATE KEY-----\n...'
+                    : secret.key.contains('url')
+                        ? 'postgresql://user:pass@host:5432/db'
+                        : null,
+              ),
+              obscureText: !secret.key.contains('pem'),
+              maxLines: secret.key.contains('pem') ? 6 : 1,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              if (valueCtrl.text.isEmpty) return;
+              Map<String, dynamic> result;
+              if (isCreating) {
+                result = await provider.createSecret(
+                  service: secret.service,
+                  key: secret.key,
+                  value: valueCtrl.text,
+                  description: secret.description,
+                );
+              } else {
+                result = await provider.updateSecret(secret.name, valueCtrl.text);
+              }
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (result['success'] == true) {
+                await provider.loadRequiredSecrets();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                        content: Text(isCreating ? 'Secret created' : 'Secret updated')),
+                  );
+                }
+              } else {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(result['error']?.toString() ?? 'Failed'),
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                    ),
+                  );
+                }
+              }
+            },
+            child: Text(isCreating ? 'Create' : 'Update'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// All Secrets Tab
+// ---------------------------------------------------------------------------
+
+class _AllSecretsTab extends StatelessWidget {
+  const _AllSecretsTab();
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +294,7 @@ class SecretsScreen extends StatelessWidget {
                     const SizedBox(height: 16),
                     const Text('No secrets found'),
                     const SizedBox(height: 8),
-                    Text('${provider.environment} environment',
+                    Text('Check AWS credentials',
                         style: TextStyle(color: Colors.grey[500])),
                   ],
                 ),
@@ -91,7 +355,7 @@ class SecretsScreen extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
-                initialValue: selectedService,
+                value: selectedService,
                 decoration: const InputDecoration(labelText: 'Service'),
                 items: provider.configServices
                     .map((s) => DropdownMenuItem(value: s, child: Text(s)))
@@ -103,7 +367,7 @@ class SecretsScreen extends StatelessWidget {
                 controller: keyCtrl,
                 decoration: const InputDecoration(
                     labelText: 'Key',
-                    hintText: 'e.g. database_url, api_key'),
+                    hintText: 'e.g. database-url, api-key'),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -126,7 +390,9 @@ class SecretsScreen extends StatelessWidget {
               onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(
             onPressed: () async {
-              if (selectedService == null || keyCtrl.text.isEmpty || valueCtrl.text.isEmpty) return;
+              if (selectedService == null ||
+                  keyCtrl.text.isEmpty ||
+                  valueCtrl.text.isEmpty) return;
               final result = await provider.createSecret(
                 service: selectedService!,
                 key: keyCtrl.text,

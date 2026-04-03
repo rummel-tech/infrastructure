@@ -61,6 +61,24 @@ echo ""
 echo "-- vehicle-manager --"
 create_secret_if_missing "vehicle-manager/database-url" "REPLACE_WITH_RDS_URL"
 
+# --- work-planner ---
+echo ""
+echo "-- work-planner --"
+create_secret_if_missing "work-planner/database-url" "REPLACE_WITH_RDS_URL"
+create_secret_if_missing "work-planner/jwt-secret"   "REPLACE_WITH_JWT_SECRET"
+
+# --- content-planner ---
+echo ""
+echo "-- content-planner --"
+create_secret_if_missing "content-planner/database-url" "REPLACE_WITH_RDS_URL"
+create_secret_if_missing "content-planner/jwt-secret"   "REPLACE_WITH_JWT_SECRET"
+
+# --- education-planner ---
+echo ""
+echo "-- education-planner --"
+create_secret_if_missing "education-planner/database-url" "REPLACE_WITH_RDS_URL"
+create_secret_if_missing "education-planner/jwt-secret"   "REPLACE_WITH_JWT_SECRET"
+
 # --- artemis ---
 echo ""
 echo "-- artemis --"
@@ -79,6 +97,12 @@ echo "  workout-planner/database-url — PostgreSQL connection string"
 echo "  meal-planner/database-url    — PostgreSQL connection string"
 echo "  home-manager/database-url    — PostgreSQL connection string"
 echo "  vehicle-manager/database-url — PostgreSQL connection string"
+echo "  work-planner/database-url    — PostgreSQL connection string"
+echo "  work-planner/jwt-secret      — Random 32+ char string"
+echo "  content-planner/database-url — PostgreSQL connection string"
+echo "  content-planner/jwt-secret   — Random 32+ char string"
+echo "  education-planner/database-url — PostgreSQL connection string"
+echo "  education-planner/jwt-secret   — Random 32+ char string"
 echo "  artemis/anthropic-api-key — From console.anthropic.com"
 echo "  artemis/github-token      — GitHub personal access token"
 echo ""
