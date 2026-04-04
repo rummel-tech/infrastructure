@@ -13,7 +13,7 @@ Complete step-by-step guide to deploy workout-planner to AWS production environm
 
 ```bash
 # 1. Setup AWS infrastructure
-cd /home/shawn/APP_DEV/infrastructure
+cd /home/shawn/_Projects/infrastructure
 ./aws/setup-aws-infrastructure.sh
 ./scripts/setup-oidc-role.sh
 
@@ -39,7 +39,7 @@ gh workflow run deploy-workout-planner-frontend.yml --repo srummel/infrastructur
 #### 1.1 Create ECS Cluster and Log Groups
 
 ```bash
-cd /home/shawn/APP_DEV/infrastructure/aws
+cd /home/shawn/_Projects/infrastructure/aws
 ./setup-aws-infrastructure.sh
 ```
 
@@ -57,7 +57,7 @@ aws logs describe-log-groups --log-group-name-prefix /ecs/ --region us-east-1
 #### 1.2 Setup GitHub OIDC Authentication
 
 ```bash
-cd /home/shawn/APP_DEV/infrastructure/scripts
+cd /home/shawn/_Projects/infrastructure/scripts
 ./setup-oidc-role.sh
 ```
 
@@ -202,7 +202,7 @@ Then update task definition to reference secrets instead:
 ### Step 4: Create ECS Service
 
 ```bash
-cd /home/shawn/APP_DEV/infrastructure/scripts
+cd /home/shawn/_Projects/infrastructure/scripts
 ./create-ecs-service.sh
 ```
 

@@ -43,7 +43,7 @@ This guide covers deploying the Workout Planner application to production on AWS
 Run the production setup script to create all required AWS resources:
 
 ```bash
-cd /home/shawn/APP_DEV/infrastructure/scripts
+cd /home/shawn/_Projects/infrastructure/scripts
 
 # Set your database URL before running
 export DATABASE_URL="postgresql://user:password@your-rds-endpoint:5432/workout_planner"
@@ -79,7 +79,7 @@ gh secret set PRODUCTION_API_URL -b "https://api.workout-planner.rummel.tech" -R
 Before creating the ECS service, you need an image in ECR:
 
 ```bash
-cd /home/shawn/APP_DEV/services
+cd /home/shawn/_Projects/services
 
 # Get AWS account ID and login to ECR
 AWS_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
@@ -96,7 +96,7 @@ docker push $ECR_URI:latest
 ## Step 4: Create ECS Service
 
 ```bash
-cd /home/shawn/APP_DEV/infrastructure/scripts
+cd /home/shawn/_Projects/infrastructure/scripts
 ./create-ecs-service.sh
 ```
 

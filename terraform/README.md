@@ -126,7 +126,7 @@ aws secretsmanager get-secret-value \
   --output text | jq -r .url
 
 # Run migrations (from application directory)
-cd /home/shawn/APP_DEV/WorkoutPlanner/applications/backend/python_fastapi_server
+cd /home/shawn/_Projects/services/workout-planner
 export DATABASE_URL="postgresql://..."
 python -c "from database import initialize_database; initialize_database()"
 ```
