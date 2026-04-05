@@ -74,7 +74,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: rummel-tech/services
-          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ inputs.repo_ref }}
           path: services-repo
 
@@ -151,6 +150,13 @@ jobs:
           echo "database_url_arn=arn:aws:secretsmanager:$AWS_REGION:$ACCOUNT_ID:secret:${{ inputs.environment }}/${{ inputs.app_name }}/database_url" >> $GITHUB_OUTPUT
           echo "jwt_secret_arn=arn:aws:secretsmanager:$AWS_REGION:$ACCOUNT_ID:secret:${{ inputs.environment }}/${{ inputs.app_name }}/jwt_secret" >> $GITHUB_OUTPUT
 
+          # Services that require JWT_SECRET in their task definition
+          NEEDS_JWT=false
+          case "${{ inputs.app_name }}" in
+            workout-planner|work-planner) NEEDS_JWT=true ;;
+          esac
+          echo "needs_jwt=$NEEDS_JWT" >> $GITHUB_OUTPUT
+
       - name: Create/Update ECS task definition
         id: task-def
         env:
@@ -190,7 +196,11 @@ jobs:
                   {
                     "name": "DATABASE_URL",
                     "valueFrom": "${{ steps.secrets.outputs.database_url_arn }}"
-                  }
+                  }$(if [ "${{ steps.secrets.outputs.needs_jwt }}" = "true" ]; then echo ',
+                  {
+                    "name": "JWT_SECRET",
+                    "valueFrom": "${{ steps.secrets.outputs.jwt_secret_arn }}"
+                  }'; fi)
                 ],
                 "logConfiguration": {
                   "logDriver": "awslogs",

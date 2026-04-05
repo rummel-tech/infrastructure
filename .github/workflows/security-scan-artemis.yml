@@ -32,7 +32,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: rummel-tech/services
-          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
@@ -101,7 +100,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: rummel-tech/services
-          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
@@ -160,7 +158,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: rummel-tech/services
-          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
 
       - name: Build Docker image

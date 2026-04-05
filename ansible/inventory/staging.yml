@@ -94,6 +94,7 @@ staging:
           - service: work-planner
             secrets:
               - database_url
+              - jwt_secret
           - service: education-planner
             secrets:
               - database_url

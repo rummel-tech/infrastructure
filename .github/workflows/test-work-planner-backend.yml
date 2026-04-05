@@ -1,35 +1,34 @@
-name: Test Workout Planner Backend
+name: Test Work Planner Backend
 
 on:
   repository_dispatch:
-    types: [test-workout-planner-backend]
+    types: [test-work-planner-backend]
   workflow_dispatch:
     inputs:
       repo_ref:
         description: 'Repository ref to test'
         required: false
         default: 'main'
-  # Trigger on push to main or PR to main
   push:
     branches:
       - main
     paths:
-      - 'workout-planner/**'
+      - 'work-planner/**'
       - 'common/**'
   pull_request:
     branches:
       - main
     paths:
-      - 'workout-planner/**'
+      - 'work-planner/**'
       - 'common/**'
 
 permissions:
   contents: read
-  pull-requests: write  # For comment on PR with test results
+  pull-requests: write
 
 env:
   PYTHON_VERSION: '3.11'
-  WORKING_DIR: 'workout-planner'
+  WORKING_DIR: 'work-planner'
 
 jobs:
   test:
@@ -61,11 +60,11 @@ jobs:
       - name: Create test environment
         working-directory: app-repo/${{ env.WORKING_DIR }}
         run: |
-          # Create minimal .env for testing
           cat > .env << EOF
           DATABASE_URL=sqlite:///test.db
-          JWT_SECRET=test-secret-key-for-ci-cd-testing-only
+          JWT_SECRET=test-secret-key-for-ci-cd-testing-only-32c
           ENVIRONMENT=test
+          DISABLE_AUTH=false
           EOF
 
       - name: Run unit tests
@@ -108,9 +107,9 @@ jobs:
         with:
           script: |
             const coverage = process.env.COVERAGE;
-            const body = `## 🧪 Test Results
+            const body = `## Test Results
 
-            ✅ All tests passed!
+            All tests passed!
 
             **Coverage**: ${coverage}%
 
@@ -137,10 +136,10 @@ jobs:
           echo "Coverage: $COVERAGE%"
           echo "Threshold: $THRESHOLD%"
           if [ "$COVERAGE" -lt "$THRESHOLD" ]; then
-            echo "❌ Coverage $COVERAGE% is below threshold $THRESHOLD%"
+            echo "Coverage $COVERAGE% is below threshold $THRESHOLD%"
             exit 1
           else
-            echo "✅ Coverage $COVERAGE% meets threshold $THRESHOLD%"
+            echo "Coverage $COVERAGE% meets threshold $THRESHOLD%"
           fi
 
   integration-tests:
@@ -175,24 +174,15 @@ jobs:
         run: |
           cat > .env << EOF
           DATABASE_URL=sqlite:///integration_test.db
-          JWT_SECRET=test-secret-key-for-integration-testing
+          JWT_SECRET=test-secret-key-for-integration-testing-32c
           ENVIRONMENT=test
+          DISABLE_AUTH=false
           EOF
 
       - name: Run integration tests
         working-directory: app-repo/${{ env.WORKING_DIR }}
         run: |
           pytest tests/test_integration.py -v --tb=short
-
-      - name: Integration test summary
-        if: always()
-        run: |
-          if [ $? -eq 0 ]; then
-            echo "✅ Integration tests passed"
-          else
-            echo "❌ Integration tests failed"
-            exit 1
-          fi
 
   lint:
     runs-on: ubuntu-latest
@@ -213,17 +203,17 @@ jobs:
       - name: Install linting tools
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 black isort mypy
+          pip install flake8 black isort
 
       - name: Run Black (code formatting check)
         working-directory: app-repo/${{ env.WORKING_DIR }}
         run: |
-          black --check --diff . || echo "⚠️  Code formatting issues found. Run 'black .' locally."
+          black --check --diff . || echo "Code formatting issues found. Run 'black .' locally."
 
       - name: Run isort (import sorting check)
         working-directory: app-repo/${{ env.WORKING_DIR }}
         run: |
-          isort --check-only --diff . || echo "⚠️  Import sorting issues found. Run 'isort .' locally."
+          isort --check-only --diff . || echo "Import sorting issues found. Run 'isort .' locally."
 
       - name: Run flake8 (style guide enforcement)
         working-directory: app-repo/${{ env.WORKING_DIR }}
