@@ -123,7 +123,7 @@ SG_ID=$(aws ec2 describe-security-groups \
 if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
   SG_ID=$(aws ec2 create-security-group \
     --group-name "$SG_NAME" \
-    --description "Production ECS tasks — Artemis platform" \
+    --description "Production ECS tasks - Artemis platform" \
     --vpc-id "$DEFAULT_VPC" \
     --region "$REGION" \
     --query 'GroupId' --output text)
@@ -145,18 +145,38 @@ aws ec2 authorize-security-group-ingress \
 # ── 4. PostgreSQL Databases ──────────────────────────────────────────────────
 echo ""
 echo "-- 4. PostgreSQL Databases --"
-for svc in "${DB_SERVICES[@]}"; do
-  DB="${SERVICE_DB[$svc]}"
-  EXISTS=$(PGPASSWORD="$RDS_PASS" psql -h "$RDS_HOST" -U "$RDS_USER" -d postgres -tAc \
-    "SELECT 1 FROM pg_database WHERE datname='${DB}'" 2>/dev/null || echo "")
-  if [ "$EXISTS" = "1" ]; then
-    echo "  [SKIP] Database already exists: $DB"
-  else
-    PGPASSWORD="$RDS_PASS" psql -h "$RDS_HOST" -U "$RDS_USER" -d postgres \
-      -c "CREATE DATABASE ${DB};" > /dev/null 2>&1
-    echo "  [OK] Created database: $DB"
-  fi
-done
+python3 - << PYEOF
+import psycopg2, sys
+
+host = "${RDS_HOST}"
+user = "${RDS_USER}"
+password = "${RDS_PASS}"
+dbs = {
+    "auth": "auth_prod",
+    "workout-planner": "workout_prod",
+    "meal-planner": "meal_prod",
+    "home-manager": "home_prod",
+    "vehicle-manager": "vehicle_prod",
+    "work-planner": "work_prod",
+    "education-planner": "education_prod",
+    "content-planner": "content_prod",
+}
+
+conn = psycopg2.connect(host=host, user=user, password=password, dbname="postgres")
+conn.autocommit = True
+cur = conn.cursor()
+
+for svc, db in dbs.items():
+    cur.execute("SELECT 1 FROM pg_database WHERE datname=%s", (db,))
+    if cur.fetchone():
+        print(f"  [SKIP] Database already exists: {db}")
+    else:
+        cur.execute(f"CREATE DATABASE {db}")
+        print(f"  [OK] Created database: {db}")
+
+cur.close()
+conn.close()
+PYEOF
 
 # ── 5. Secrets Manager ──────────────────────────────────────────────────────
 echo ""
