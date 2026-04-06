@@ -18,6 +18,10 @@ on:
         required: false
         default: 'main'
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   deploy-staging:
     if: github.event.inputs.environment == 'staging' || github.event_name == 'repository_dispatch'
