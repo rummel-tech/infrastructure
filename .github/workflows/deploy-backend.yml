@@ -22,7 +22,7 @@ on:
         type: number
     secrets:
       PAT_TOKEN:
-        required: true
+        required: false
       AWS_ROLE_TO_ASSUME:
         required: true
 
