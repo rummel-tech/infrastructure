@@ -1,0 +1,44 @@
+name: Deploy Work Planner Backend
+
+on:
+  repository_dispatch:
+    types: [deploy-work-planner-backend]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: 'staging'
+      repo_ref:
+        description: 'Repository ref to deploy'
+        required: false
+        default: 'main'
+
+jobs:
+  deploy-staging:
+    if: github.event.inputs.environment == 'staging' || github.event_name == 'repository_dispatch'
+    uses: ./.github/workflows/deploy-backend.yml
+    with:
+      app_name: work-planner
+      environment: staging
+      repo_ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
+      port: 8040
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+  deploy-production:
+    if: github.event.inputs.environment == 'production'
+    uses: ./.github/workflows/deploy-backend.yml
+    with:
+      app_name: work-planner
+      environment: production
+      repo_ref: ${{ github.event.inputs.repo_ref || 'main' }}
+      port: 8040
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}

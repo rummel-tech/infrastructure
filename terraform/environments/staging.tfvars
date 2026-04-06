@@ -81,6 +81,39 @@ applications = {
     health_check_path = "/health"
     repository        = "rummel-tech/services"
   }
+  work-planner = {
+    enabled           = true
+    port              = 8040
+    cpu               = 256
+    memory            = 512
+    desired_count     = 1
+    min_capacity      = 1
+    max_capacity      = 2
+    health_check_path = "/health"
+    repository        = "rummel-tech/services"
+  }
+  education-planner = {
+    enabled           = true
+    port              = 8050
+    cpu               = 256
+    memory            = 512
+    desired_count     = 1
+    min_capacity      = 1
+    max_capacity      = 2
+    health_check_path = "/health"
+    repository        = "rummel-tech/services"
+  }
+  content-planner = {
+    enabled           = true
+    port              = 8060
+    cpu               = 256
+    memory            = 512
+    desired_count     = 1
+    min_capacity      = 1
+    max_capacity      = 2
+    health_check_path = "/health"
+    repository        = "rummel-tech/services"
+  }
 }
 
 # ECS Configuration

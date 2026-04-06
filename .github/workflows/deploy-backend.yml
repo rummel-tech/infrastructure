@@ -153,7 +153,7 @@ jobs:
           # Services that require JWT_SECRET in their task definition
           NEEDS_JWT=false
           case "${{ inputs.app_name }}" in
-            workout-planner|work-planner) NEEDS_JWT=true ;;
+            workout-planner|work-planner|education-planner|content-planner) NEEDS_JWT=true ;;
           esac
           echo "needs_jwt=$NEEDS_JWT" >> $GITHUB_OUTPUT
 

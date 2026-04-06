@@ -1,298 +1,327 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# setup-production.sh
+# Bootstraps the full production AWS infrastructure for the Artemis platform.
+# Idempotent: safe to re-run.
 #
-# Setup Production Environment for Workout Planner
-# This script creates all required AWS resources for production deployment
-#
-# Prerequisites:
-# - AWS CLI configured with appropriate permissions
-# - PostgreSQL RDS instance or connection string ready
-#
-# Usage:
-#   ./setup-production.sh
-#   # Or with custom database URL:
-#   DATABASE_URL="postgresql://user:pass@host:5432/db" ./setup-production.sh
+# Uses the existing fitness-agent-dev RDS for all service databases.
+# Creates separate databases per service on that instance.
 
-set -e
+set -euo pipefail
 
-AWS_REGION="us-east-1"
-APP_NAME="workout-planner"
-CLUSTER_NAME="app-cluster"
+REGION="us-east-1"
+ENV="production"
+CLUSTER="${ENV}-cluster"
+EXEC_ROLE="${ENV}-ecs-task-execution-role"
+TASK_ROLE="${ENV}-ecs-task-role"
+SG_NAME="${ENV}-ecs-tasks-sg"
+RDS_SG="sg-0e8d3e975a74e878a"
+DEFAULT_VPC="vpc-882bb0ee"
+SUBNETS="subnet-ffc843c3,subnet-4dca8716,subnet-28137d24"
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+# RDS credentials — pass via environment or set below (do not commit real values)
+# RDS_PASS is read from the fitness-agent/dev/database_url secret at runtime
+RDS_HOST="${RDS_HOST:-fitness-agent-dev.cg72weko0fgm.us-east-1.rds.amazonaws.com}"
+RDS_USER="${RDS_USER:-fitnessadmin}"
+RDS_PASS="${RDS_PASS:-$(aws secretsmanager get-secret-value --secret-id fitness-agent/dev/database_url --region us-east-1 --query SecretString --output text 2>/dev/null | python3 -c "import sys,re; m=re.match(r'postgresql://([^:]+):([^@]+)@',sys.stdin.read()); print(m.group(2) if m else '')")}"
 
-echo "============================================================"
-echo "  WORKOUT PLANNER PRODUCTION SETUP"
-echo "============================================================"
+# Services and their ports
+declare -A SERVICE_PORT=(
+  [auth]="8090"
+  [artemis]="8080"
+  [workout-planner]="8000"
+  [meal-planner]="8010"
+  [home-manager]="8020"
+  [vehicle-manager]="8030"
+  [work-planner]="8040"
+  [education-planner]="8050"
+  [content-planner]="8060"
+)
+
+# Services that need JWT_SECRET
+JWT_SERVICES=("workout-planner" "work-planner" "education-planner" "content-planner")
+
+# Services with a PostgreSQL database (artemis has no DB)
+DB_SERVICES=("auth" "workout-planner" "meal-planner" "home-manager" "vehicle-manager" "work-planner" "education-planner" "content-planner")
+
+# DB name per service
+declare -A SERVICE_DB=(
+  [auth]="auth_prod"
+  [workout-planner]="workout_prod"
+  [meal-planner]="meal_prod"
+  [home-manager]="home_prod"
+  [vehicle-manager]="vehicle_prod"
+  [work-planner]="work_prod"
+  [education-planner]="education_prod"
+  [content-planner]="content_prod"
+)
+
+echo "=== Artemis Platform — Production Bootstrap ==="
+echo "Account : $ACCOUNT_ID  Region : $REGION"
 echo ""
 
-# Check AWS credentials
-echo "[1/8] Verifying AWS credentials..."
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
-if [ -z "$ACCOUNT_ID" ]; then
-    echo "ERROR: AWS credentials not configured. Run 'aws configure' first."
-    exit 1
+# ── 1. ECS Cluster ──────────────────────────────────────────────────────────
+echo "-- 1. ECS Cluster: $CLUSTER --"
+CLUSTER_STATUS=$(aws ecs describe-clusters \
+  --clusters "$CLUSTER" --region "$REGION" \
+  --query 'clusters[0].status' --output text 2>/dev/null || echo "MISSING")
+if [ "$CLUSTER_STATUS" != "ACTIVE" ]; then
+  aws ecs create-cluster --cluster-name "$CLUSTER" --region "$REGION" \
+    --capacity-providers FARGATE FARGATE_SPOT \
+    --default-capacity-provider-strategy capacityProvider=FARGATE,weight=1,base=1 \
+    --output text --query 'cluster.clusterName' > /dev/null
+  echo "  [OK] Created cluster: $CLUSTER"
+else
+  echo "  [SKIP] Cluster already active"
 fi
-echo "   Account ID: $ACCOUNT_ID"
+
+# ── 2. IAM Roles ────────────────────────────────────────────────────────────
+TRUST_POLICY='{
+  "Version":"2012-10-17",
+  "Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]
+}'
+
 echo ""
-
-# Create ECS Cluster if it doesn't exist
-echo "[2/8] Setting up ECS Cluster..."
-if aws ecs describe-clusters --clusters $CLUSTER_NAME --region $AWS_REGION --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
-    echo "   Cluster already exists: $CLUSTER_NAME"
-else
-    echo "   Creating cluster: $CLUSTER_NAME"
-    aws ecs create-cluster \
-        --cluster-name $CLUSTER_NAME \
-        --capacity-providers FARGATE FARGATE_SPOT \
-        --default-capacity-provider-strategy capacityProvider=FARGATE,weight=1 \
-        --region $AWS_REGION
-    echo "   Cluster created successfully"
-fi
-echo ""
-
-# Create CloudWatch Log Group
-echo "[3/8] Setting up CloudWatch Logs..."
-if aws logs describe-log-groups --log-group-name-prefix "/ecs/$APP_NAME" --region $AWS_REGION --query 'logGroups[0].logGroupName' --output text 2>/dev/null | grep -q "/ecs/$APP_NAME"; then
-    echo "   Log group already exists: /ecs/$APP_NAME"
-else
-    aws logs create-log-group --log-group-name "/ecs/$APP_NAME" --region $AWS_REGION
-    aws logs put-retention-policy --log-group-name "/ecs/$APP_NAME" --retention-in-days 30 --region $AWS_REGION
-    echo "   Log group created: /ecs/$APP_NAME (30 day retention)"
-fi
-echo ""
-
-# Create ECR Repository
-echo "[4/8] Setting up ECR Repository..."
-if aws ecr describe-repositories --repository-names $APP_NAME --region $AWS_REGION 2>/dev/null | grep -q $APP_NAME; then
-    echo "   ECR repository already exists: $APP_NAME"
-else
-    aws ecr create-repository \
-        --repository-name $APP_NAME \
-        --image-scanning-configuration scanOnPush=true \
-        --region $AWS_REGION
-    echo "   ECR repository created: $APP_NAME"
-fi
-ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$APP_NAME"
-echo "   ECR URI: $ECR_URI"
-echo ""
-
-# Create Secrets in AWS Secrets Manager
-echo "[5/8] Setting up Secrets Manager..."
-
-# Generate JWT secret if not provided
-JWT_SECRET=${JWT_SECRET:-$(openssl rand -hex 32)}
-
-# Check for DATABASE_URL environment variable
-if [ -z "$DATABASE_URL" ]; then
-    echo "   WARNING: DATABASE_URL not set. Using placeholder."
-    echo "   Set it with: DATABASE_URL='postgresql://...' before running."
-    DATABASE_URL="postgresql://workout_user:CHANGE_ME@localhost:5432/workout_planner"
-fi
-
-# Create or update JWT secret
-SECRET_NAME="$APP_NAME/jwt-secret"
-if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --region $AWS_REGION 2>/dev/null; then
-    echo "   Updating existing secret: $SECRET_NAME"
-    aws secretsmanager update-secret \
-        --secret-id "$SECRET_NAME" \
-        --secret-string "$JWT_SECRET" \
-        --region $AWS_REGION > /dev/null
-else
-    echo "   Creating secret: $SECRET_NAME"
-    aws secretsmanager create-secret \
-        --name "$SECRET_NAME" \
-        --secret-string "$JWT_SECRET" \
-        --region $AWS_REGION > /dev/null
-fi
-
-# Create or update DATABASE_URL secret
-SECRET_NAME="$APP_NAME/database-url"
-if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --region $AWS_REGION 2>/dev/null; then
-    echo "   Updating existing secret: $SECRET_NAME"
-    aws secretsmanager update-secret \
-        --secret-id "$SECRET_NAME" \
-        --secret-string "$DATABASE_URL" \
-        --region $AWS_REGION > /dev/null
-else
-    echo "   Creating secret: $SECRET_NAME"
-    aws secretsmanager create-secret \
-        --name "$SECRET_NAME" \
-        --secret-string "$DATABASE_URL" \
-        --region $AWS_REGION > /dev/null
-fi
-echo ""
-
-# Create IAM roles
-echo "[6/8] Setting up IAM Roles..."
-
-# ECS Task Execution Role (for pulling images and secrets)
-EXEC_ROLE_NAME="ecsTaskExecutionRole"
-if aws iam get-role --role-name $EXEC_ROLE_NAME 2>/dev/null; then
-    echo "   Execution role exists: $EXEC_ROLE_NAME"
-else
-    echo "   Creating execution role: $EXEC_ROLE_NAME"
-    cat > /tmp/ecs-trust-policy.json << 'EOF'
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Principal": {
-                "Service": "ecs-tasks.amazonaws.com"
-            },
-            "Action": "sts:AssumeRole"
-        }
-    ]
+echo "-- 2. IAM Roles --"
+create_role_if_missing() {
+  local role_name="$1"
+  if ! aws iam get-role --role-name "$role_name" > /dev/null 2>&1; then
+    aws iam create-role --role-name "$role_name" \
+      --assume-role-policy-document "$TRUST_POLICY" \
+      --output text --query 'Role.RoleName' > /dev/null
+    echo "  [OK] Created role: $role_name"
+  else
+    echo "  [SKIP] Role already exists: $role_name"
+  fi
 }
-EOF
-    aws iam create-role \
-        --role-name $EXEC_ROLE_NAME \
-        --assume-role-policy-document file:///tmp/ecs-trust-policy.json
-    aws iam attach-role-policy \
-        --role-name $EXEC_ROLE_NAME \
-        --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-fi
+create_role_if_missing "$EXEC_ROLE"
+create_role_if_missing "$TASK_ROLE"
 
-# Add Secrets Manager permissions to execution role
-SECRETS_POLICY_NAME="ECSSecretsAccess-$APP_NAME"
-cat > /tmp/secrets-policy.json << EOF
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "secretsmanager:GetSecretValue"
-            ],
-            "Resource": [
-                "arn:aws:secretsmanager:$AWS_REGION:$ACCOUNT_ID:secret:$APP_NAME/*"
-            ]
-        }
-    ]
-}
-EOF
-
-if aws iam get-policy --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/$SECRETS_POLICY_NAME" 2>/dev/null; then
-    echo "   Secrets policy exists: $SECRETS_POLICY_NAME"
-else
-    echo "   Creating secrets access policy: $SECRETS_POLICY_NAME"
-    aws iam create-policy \
-        --policy-name "$SECRETS_POLICY_NAME" \
-        --policy-document file:///tmp/secrets-policy.json
-fi
 aws iam attach-role-policy \
-    --role-name $EXEC_ROLE_NAME \
-    --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/$SECRETS_POLICY_NAME" 2>/dev/null || true
+  --role-name "$EXEC_ROLE" \
+  --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy" 2>/dev/null || true
 
-# ECS Task Role (for application to access AWS services)
-TASK_ROLE_NAME="ecsTaskRole"
-if aws iam get-role --role-name $TASK_ROLE_NAME 2>/dev/null; then
-    echo "   Task role exists: $TASK_ROLE_NAME"
-else
-    echo "   Creating task role: $TASK_ROLE_NAME"
-    aws iam create-role \
-        --role-name $TASK_ROLE_NAME \
-        --assume-role-policy-document file:///tmp/ecs-trust-policy.json
-fi
-rm /tmp/ecs-trust-policy.json /tmp/secrets-policy.json
-echo ""
-
-# Set up GitHub OIDC (if not exists)
-echo "[7/8] Setting up GitHub OIDC..."
-OIDC_PROVIDER_ARN="arn:aws:iam::$ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
-if aws iam list-open-id-connect-providers --query "OpenIDConnectProviderList[?Arn=='$OIDC_PROVIDER_ARN']" --output text | grep -q "token.actions.githubusercontent.com"; then
-    echo "   GitHub OIDC provider already exists"
-else
-    echo "   Creating GitHub OIDC provider..."
-    THUMBPRINT="6938fd4d98bab03faadb97b34396831e3780aea1"
-    aws iam create-open-id-connect-provider \
-        --url https://token.actions.githubusercontent.com \
-        --client-id-list sts.amazonaws.com \
-        --thumbprint-list $THUMBPRINT
-    echo "   GitHub OIDC provider created"
-fi
-
-# Create GitHub Actions deployment role
-GH_ROLE_NAME="GitHubActionsDeploymentRole"
-if aws iam get-role --role-name $GH_ROLE_NAME 2>/dev/null; then
-    echo "   GitHub Actions role exists: $GH_ROLE_NAME"
-else
-    echo "   Creating GitHub Actions role: $GH_ROLE_NAME"
-    cat > /tmp/github-trust-policy.json << EOF
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Principal": {
-                "Federated": "arn:aws:iam::$ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
-            },
-            "Action": "sts:AssumeRoleWithWebIdentity",
-            "Condition": {
-                "StringEquals": {
-                    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-                },
-                "StringLike": {
-                    "token.actions.githubusercontent.com:sub": [
-                        "repo:rummel-tech/infrastructure:*",
-                        "repo:rummel-tech/services:*"
-                    ]
-                }
-            }
-        }
+aws iam put-role-policy \
+  --role-name "$EXEC_ROLE" \
+  --policy-name "${ENV}-secrets-logs" \
+  --policy-document "{
+    \"Version\":\"2012-10-17\",
+    \"Statement\":[
+      {\"Effect\":\"Allow\",\"Action\":[\"secretsmanager:GetSecretValue\"],
+       \"Resource\":\"arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${ENV}/*\"},
+      {\"Effect\":\"Allow\",\"Action\":[\"logs:CreateLogGroup\"],\"Resource\":\"*\"}
     ]
-}
-EOF
-    aws iam create-role \
-        --role-name $GH_ROLE_NAME \
-        --assume-role-policy-document file:///tmp/github-trust-policy.json
+  }"
+echo "  [OK] Policies applied to $EXEC_ROLE"
 
-    # Attach required policies
-    aws iam attach-role-policy --role-name $GH_ROLE_NAME \
-        --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
-    aws iam attach-role-policy --role-name $GH_ROLE_NAME \
-        --policy-arn arn:aws:iam::aws:policy/AmazonECS_FullAccess
-
-    rm /tmp/github-trust-policy.json
-    echo "   GitHub Actions role created"
+# ── 3. Security Group ────────────────────────────────────────────────────────
+echo ""
+echo "-- 3. Security Group: $SG_NAME --"
+SG_ID=$(aws ec2 describe-security-groups \
+  --region "$REGION" \
+  --filters "Name=group-name,Values=${SG_NAME}" "Name=vpc-id,Values=${DEFAULT_VPC}" \
+  --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
+  SG_ID=$(aws ec2 create-security-group \
+    --group-name "$SG_NAME" \
+    --description "Production ECS tasks — Artemis platform" \
+    --vpc-id "$DEFAULT_VPC" \
+    --region "$REGION" \
+    --query 'GroupId' --output text)
+  aws ec2 authorize-security-group-ingress \
+    --group-id "$SG_ID" --protocol -1 --source-group "$SG_ID" \
+    --region "$REGION" > /dev/null 2>&1 || true
+  echo "  [OK] Created security group: $SG_ID"
+else
+  echo "  [SKIP] Security group already exists: $SG_ID"
 fi
-GH_ROLE_ARN="arn:aws:iam::$ACCOUNT_ID:role/$GH_ROLE_NAME"
-echo ""
 
-# Summary
-echo "[8/8] Setup Complete!"
+# Allow ECS tasks to reach RDS on port 5432
+aws ec2 authorize-security-group-ingress \
+  --group-id "$RDS_SG" --protocol tcp --port 5432 \
+  --source-group "$SG_ID" --region "$REGION" > /dev/null 2>&1 \
+  && echo "  [OK] RDS ingress rule added" \
+  || echo "  [SKIP] RDS ingress rule already exists"
+
+# ── 4. PostgreSQL Databases ──────────────────────────────────────────────────
 echo ""
-echo "============================================================"
-echo "  PRODUCTION ENVIRONMENT READY"
-echo "============================================================"
+echo "-- 4. PostgreSQL Databases --"
+for svc in "${DB_SERVICES[@]}"; do
+  DB="${SERVICE_DB[$svc]}"
+  EXISTS=$(PGPASSWORD="$RDS_PASS" psql -h "$RDS_HOST" -U "$RDS_USER" -d postgres -tAc \
+    "SELECT 1 FROM pg_database WHERE datname='${DB}'" 2>/dev/null || echo "")
+  if [ "$EXISTS" = "1" ]; then
+    echo "  [SKIP] Database already exists: $DB"
+  else
+    PGPASSWORD="$RDS_PASS" psql -h "$RDS_HOST" -U "$RDS_USER" -d postgres \
+      -c "CREATE DATABASE ${DB};" > /dev/null 2>&1
+    echo "  [OK] Created database: $DB"
+  fi
+done
+
+# ── 5. Secrets Manager ──────────────────────────────────────────────────────
 echo ""
-echo "AWS Resources Created:"
-echo "  - ECS Cluster: $CLUSTER_NAME"
-echo "  - ECR Repository: $ECR_URI"
-echo "  - CloudWatch Log Group: /ecs/$APP_NAME"
-echo "  - Secrets: $APP_NAME/jwt-secret, $APP_NAME/database-url"
-echo "  - IAM Roles: ecsTaskExecutionRole, ecsTaskRole"
-echo "  - GitHub OIDC: Configured for rummel-tech/infrastructure"
+echo "-- 5. Secrets Manager --"
+create_secret_if_missing() {
+  local name="$1" value="$2"
+  if ! aws secretsmanager describe-secret --secret-id "$name" --region "$REGION" > /dev/null 2>&1; then
+    aws secretsmanager create-secret --name "$name" --secret-string "$value" \
+      --region "$REGION" --output text --query 'Name' > /dev/null
+    echo "  [OK] Created: $name"
+  else
+    echo "  [SKIP] Exists: $name"
+  fi
+}
+
+# Database URLs
+for svc in "${DB_SERVICES[@]}"; do
+  DB="${SERVICE_DB[$svc]}"
+  DB_URL="postgresql://${RDS_USER}:${RDS_PASS}@${RDS_HOST}:5432/${DB}"
+  create_secret_if_missing "${ENV}/${svc}/database_url" "$DB_URL"
+done
+
+# JWT secrets
+for svc in "${JWT_SERVICES[@]}"; do
+  JWT_VAL=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+  create_secret_if_missing "${ENV}/${svc}/jwt_secret" "$JWT_VAL"
+done
+
+# RSA keys for auth service
+echo "  Generating RSA-2048 key pair for auth..."
+openssl genrsa -out /tmp/prod_private.pem 2048 2>/dev/null
+openssl rsa -in /tmp/prod_private.pem -pubout -out /tmp/prod_public.pem 2>/dev/null
+create_secret_if_missing "${ENV}/auth/private_key" "$(cat /tmp/prod_private.pem)"
+create_secret_if_missing "${ENV}/auth/public_key" "$(cat /tmp/prod_public.pem)"
+rm -f /tmp/prod_private.pem /tmp/prod_public.pem
+
+# Artemis secrets
+# Pass ANTHROPIC_API_KEY as environment variable:
+#   ANTHROPIC_API_KEY=sk-ant-... ./setup-production.sh
+ANTHRO_VAL="${ANTHROPIC_API_KEY:-REPLACE_WITH_ANTHROPIC_API_KEY}"
+create_secret_if_missing "${ENV}/artemis/anthropic_api_key" "$ANTHRO_VAL"
+create_secret_if_missing "${ENV}/artemis/github_token" "REPLACE_WITH_GITHUB_TOKEN"
+create_secret_if_missing "${ENV}/auth/google_client_id" "REPLACE_WITH_GOOGLE_CLIENT_ID"
+
+# ── 6. ECS Services ─────────────────────────────────────────────────────────
 echo ""
-echo "Next Steps:"
+echo "-- 6. ECS Services --"
+for svc in "${!SERVICE_PORT[@]}"; do
+  PORT="${SERVICE_PORT[$svc]}"
+  SERVICE_NAME="${ENV}-${svc}-service"
+
+  SVC_STATUS=$(aws ecs describe-services \
+    --cluster "$CLUSTER" --services "$SERVICE_NAME" --region "$REGION" \
+    --query 'services[0].status' --output text 2>/dev/null || echo "")
+  if [ "$SVC_STATUS" = "ACTIVE" ]; then
+    echo "  [SKIP] Service already active: $SERVICE_NAME"
+    continue
+  fi
+
+  # Build secrets array
+  SECRETS_PARTS=()
+  if [[ " ${DB_SERVICES[*]} " =~ " ${svc} " ]]; then
+    ARN="arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${ENV}/${svc}/database_url"
+    SECRETS_PARTS+=("{\"name\":\"DATABASE_URL\",\"valueFrom\":\"${ARN}\"}")
+  fi
+  if [[ " ${JWT_SERVICES[*]} " =~ " ${svc} " ]]; then
+    ARN="arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${ENV}/${svc}/jwt_secret"
+    SECRETS_PARTS+=("{\"name\":\"JWT_SECRET\",\"valueFrom\":\"${ARN}\"}")
+  fi
+  if [ "$svc" = "auth" ]; then
+    SECRETS_PARTS+=("{\"name\":\"PRIVATE_KEY_PEM\",\"valueFrom\":\"arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${ENV}/auth/private_key\"}")
+    SECRETS_PARTS+=("{\"name\":\"PUBLIC_KEY_PEM\",\"valueFrom\":\"arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${ENV}/auth/public_key\"}")
+    SECRETS_PARTS+=("{\"name\":\"GOOGLE_CLIENT_ID\",\"valueFrom\":\"arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${ENV}/auth/google_client_id\"}")
+  fi
+  if [ "$svc" = "artemis" ]; then
+    SECRETS_PARTS+=("{\"name\":\"ANTHROPIC_API_KEY\",\"valueFrom\":\"arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${ENV}/artemis/anthropic_api_key\"}")
+    SECRETS_PARTS+=("{\"name\":\"GITHUB_TOKEN\",\"valueFrom\":\"arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${ENV}/artemis/github_token\"}")
+  fi
+
+  SECRETS_JSON="[]"
+  if [ ${#SECRETS_PARTS[@]} -gt 0 ]; then
+    JOINED=$(printf '%s,' "${SECRETS_PARTS[@]}")
+    SECRETS_JSON="[${JOINED%,}]"
+  fi
+
+  cat > /tmp/task-def.json << TASKEOF
+{
+  "family": "${ENV}-${svc}",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::${ACCOUNT_ID}:role/${EXEC_ROLE}",
+  "taskRoleArn": "arn:aws:iam::${ACCOUNT_ID}:role/${TASK_ROLE}",
+  "containerDefinitions": [{
+    "name": "${ENV}-${svc}",
+    "image": "901746942632.dkr.ecr.${REGION}.amazonaws.com/${svc}:latest",
+    "essential": true,
+    "portMappings": [{"containerPort": ${PORT}, "protocol": "tcp"}],
+    "environment": [
+      {"name": "PORT", "value": "${PORT}"},
+      {"name": "ENVIRONMENT", "value": "production"},
+      {"name": "LOG_LEVEL", "value": "info"},
+      {"name": "APP_NAME", "value": "${svc}"},
+      {"name": "DISABLE_AUTH", "value": "false"}
+    ],
+    "secrets": ${SECRETS_JSON},
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "options": {
+        "awslogs-group": "/ecs/${ENV}-${svc}",
+        "awslogs-region": "${REGION}",
+        "awslogs-stream-prefix": "ecs",
+        "awslogs-create-group": "true"
+      }
+    },
+    "healthCheck": {
+      "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')\" || exit 1"],
+      "interval": 30,
+      "timeout": 5,
+      "retries": 3,
+      "startPeriod": 60
+    }
+  }]
+}
+TASKEOF
+
+  TASK_DEF_ARN=$(aws ecs register-task-definition \
+    --cli-input-json file:///tmp/task-def.json \
+    --region "$REGION" \
+    --query 'taskDefinition.taskDefinitionArn' --output text)
+
+  aws ecs create-service \
+    --cluster "$CLUSTER" \
+    --service-name "$SERVICE_NAME" \
+    --task-definition "$TASK_DEF_ARN" \
+    --desired-count 1 \
+    --launch-type FARGATE \
+    --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SG_ID}],assignPublicIp=ENABLED}" \
+    --region "$REGION" \
+    --output text --query 'service.serviceName' > /dev/null
+
+  echo "  [OK] Created: $SERVICE_NAME  (port $PORT)"
+  rm -f /tmp/task-def.json
+done
+
 echo ""
-echo "1. Set the GitHub secret in the infrastructure repo:"
-echo "   gh secret set AWS_ROLE_TO_ASSUME -b '$GH_ROLE_ARN' -R rummel-tech/infrastructure"
+echo "================================================================="
+echo "  Production bootstrap complete"
+echo "================================================================="
 echo ""
-echo "2. If using RDS, update the database URL secret:"
-echo "   aws secretsmanager update-secret \\"
-echo "     --secret-id '$APP_NAME/database-url' \\"
-echo "     --secret-string 'postgresql://user:pass@host:5432/db' \\"
-echo "     --region $AWS_REGION"
+echo "Cluster:  $CLUSTER"
 echo ""
-echo "3. Build and push initial Docker image:"
-echo "   cd /home/shawn/_Projects/services"
-echo "   aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI"
-echo "   docker build -f workout-planner/Dockerfile -t $ECR_URI:latest ."
-echo "   docker push $ECR_URI:latest"
+echo "MANUAL STEPS REMAINING:"
 echo ""
-echo "4. Create the ECS service:"
-echo "   cd /home/shawn/_Projects/infrastructure/scripts"
-echo "   ./create-ecs-service.sh"
+echo "1. Set Google OAuth Client ID (from console.cloud.google.com):"
+echo "   aws secretsmanager put-secret-value \\"
+echo "     --secret-id ${ENV}/auth/google_client_id \\"
+echo "     --secret-string '<YOUR_GOOGLE_CLIENT_ID>' --region $REGION"
 echo ""
-echo "5. Or trigger deployment via GitHub Actions:"
-echo "   gh workflow run deploy-workout-planner-backend.yml -R rummel-tech/infrastructure"
+echo "2. Set GitHub token for Artemis dev tools:"
+echo "   aws secretsmanager put-secret-value \\"
+echo "     --secret-id ${ENV}/artemis/github_token \\"
+echo "     --secret-string '<YOUR_GITHUB_PAT>' --region $REGION"
 echo ""
+echo "3. Once AWS approves Fargate quota (ticket pending), deploy via:"
+echo "   gh workflow run deploy-<app>-backend.yml \\"
+echo "     --repo rummel-tech/infrastructure -f environment=production"
