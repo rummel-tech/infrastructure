@@ -150,7 +150,8 @@ class DashboardProvider extends ChangeNotifier {
 
   Future<void> loadRequiredSecrets() async {
     try {
-      final data = await _api.get('/api/secrets/required');
+      final data = await _api.get('/api/secrets/required',
+          params: {'environment': _environment});
       final list = data['secrets'] as List? ?? [];
       _requiredSecrets = list.map((s) => RequiredSecret.fromJson(s)).toList();
       final summary = data['summary'];
@@ -363,9 +364,11 @@ class DashboardProvider extends ChangeNotifier {
     required String key,
     required String value,
     String description = '',
+    String? environment,
   }) async {
-    // Creates as {service}/{key} — matching ECS task definition secret paths.
+    // Creates as {environment}/{service}/{key} matching ECS task definition paths.
     return _api.post('/api/secrets', body: {
+      'environment': environment ?? _environment,
       'service': service,
       'key': key,
       'value': value,

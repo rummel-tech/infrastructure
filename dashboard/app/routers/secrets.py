@@ -11,6 +11,7 @@ def get_secrets_service(settings: Settings = Depends(get_settings)) -> SecretsSe
 
 
 class SecretCreate(BaseModel):
+    environment: str = "production"
     service: str
     key: str
     value: str
@@ -23,7 +24,10 @@ class SecretUpdate(BaseModel):
 
 
 @router.get("/required")
-async def list_required_secrets(svc: SecretsService = Depends(get_secrets_service)):
+async def list_required_secrets(
+    environment: str = "production",
+    svc: SecretsService = Depends(get_secrets_service),
+):
     """Return all required platform secrets with their current status.
 
     Status values:
@@ -31,7 +35,7 @@ async def list_required_secrets(svc: SecretsService = Depends(get_secrets_servic
       - 'placeholder' — secret exists but still has the REPLACE_WITH_* placeholder value
       - 'missing'     — secret does not exist in Secrets Manager
     """
-    results = await svc.check_required_secrets()
+    results = await svc.check_required_secrets(environment=environment)
     total = len(results)
     set_count = sum(1 for r in results if r["status"] == "set")
     placeholder_count = sum(1 for r in results if r["status"] == "placeholder")
@@ -84,7 +88,7 @@ async def create_secret(
     This matches the format used by ECS task definitions and setup-secrets.sh.
     Example: service='auth', key='database-url' → creates 'auth/database-url'.
     """
-    name = f"{body.service}/{body.key}"
+    name = f"{body.environment}/{body.service}/{body.key}"
     result = await svc.create_secret(name, body.value, body.description)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to create secret"))

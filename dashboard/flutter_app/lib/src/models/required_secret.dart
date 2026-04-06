@@ -1,5 +1,6 @@
 class RequiredSecret {
   final String name;
+  final String environment;
   final String service;
   final String key;
   final String description;
@@ -7,6 +8,7 @@ class RequiredSecret {
 
   const RequiredSecret({
     required this.name,
+    required this.environment,
     required this.service,
     required this.key,
     required this.description,
@@ -15,6 +17,7 @@ class RequiredSecret {
 
   factory RequiredSecret.fromJson(Map<String, dynamic> json) => RequiredSecret(
         name: json['name'] ?? '',
+        environment: json['environment'] ?? '',
         service: json['service'] ?? '',
         key: json['key'] ?? '',
         description: json['description'] ?? '',

@@ -6,33 +6,34 @@ from datetime import datetime
 # Format: {service}/{key} — matches ECS task definition secret paths.
 REQUIRED_SECRETS: list[dict] = [
     # auth
-    {"service": "auth", "key": "database-url",      "description": "PostgreSQL RDS connection string for auth_db"},
-    {"service": "auth", "key": "google-client-id",  "description": "Google OAuth 2.0 Web client ID"},
-    {"service": "auth", "key": "private-key-pem",   "description": "RS256 RSA private key (JWT signing)"},
-    {"service": "auth", "key": "public-key-pem",    "description": "RS256 RSA public key (JWT verification by all modules)"},
+    {"service": "auth", "key": "database_url",    "description": "PostgreSQL connection string for auth_prod"},
+    {"service": "auth", "key": "google_client_id","description": "Google OAuth 2.0 Web client ID — get from console.cloud.google.com"},
+    {"service": "auth", "key": "private_key",     "description": "RS256 RSA private key (JWT signing)"},
+    {"service": "auth", "key": "public_key",      "description": "RS256 RSA public key (JWT verification by all modules)"},
     # workout-planner
-    {"service": "workout-planner", "key": "database-url", "description": "PostgreSQL RDS connection string for workout_planner_db"},
+    {"service": "workout-planner", "key": "database_url", "description": "PostgreSQL connection string for workout_prod"},
+    {"service": "workout-planner", "key": "jwt_secret",   "description": "HS256 JWT signing secret (standalone mode)"},
     # meal-planner
-    {"service": "meal-planner",    "key": "database-url", "description": "PostgreSQL RDS connection string for meal_planner_db"},
+    {"service": "meal-planner",    "key": "database_url", "description": "PostgreSQL connection string for meal_prod"},
     # home-manager
-    {"service": "home-manager",    "key": "database-url", "description": "PostgreSQL RDS connection string for home_manager_db"},
+    {"service": "home-manager",    "key": "database_url", "description": "PostgreSQL connection string for home_prod"},
     # vehicle-manager
-    {"service": "vehicle-manager", "key": "database-url", "description": "PostgreSQL RDS connection string for vehicle_manager_db"},
+    {"service": "vehicle-manager", "key": "database_url", "description": "PostgreSQL connection string for vehicle_prod"},
     # work-planner
-    {"service": "work-planner",    "key": "database-url", "description": "PostgreSQL RDS connection string for work_planner_db"},
-    {"service": "work-planner",    "key": "jwt-secret",   "description": "HS256 JWT signing secret (standalone mode)"},
+    {"service": "work-planner",    "key": "database_url", "description": "PostgreSQL connection string for work_prod"},
+    {"service": "work-planner",    "key": "jwt_secret",   "description": "HS256 JWT signing secret (standalone mode)"},
     # content-planner
-    {"service": "content-planner", "key": "database-url", "description": "PostgreSQL RDS connection string for content_planner_db"},
-    {"service": "content-planner", "key": "jwt-secret",   "description": "HS256 JWT signing secret (standalone mode)"},
+    {"service": "content-planner", "key": "database_url", "description": "PostgreSQL connection string for content_prod"},
+    {"service": "content-planner", "key": "jwt_secret",   "description": "HS256 JWT signing secret (standalone mode)"},
     # education-planner
-    {"service": "education-planner", "key": "database-url", "description": "PostgreSQL RDS connection string for education_planner_db"},
-    {"service": "education-planner", "key": "jwt-secret",   "description": "HS256 JWT signing secret (standalone mode)"},
+    {"service": "education-planner", "key": "database_url", "description": "PostgreSQL connection string for education_prod"},
+    {"service": "education-planner", "key": "jwt_secret",   "description": "HS256 JWT signing secret (standalone mode)"},
     # artemis
-    {"service": "artemis", "key": "anthropic-api-key", "description": "Anthropic Claude API key for the AI agent"},
-    {"service": "artemis", "key": "github-token",      "description": "GitHub PAT (repo scope) for platform self-management tools"},
+    {"service": "artemis", "key": "anthropic_api_key", "description": "Anthropic Claude API key for the AI agent"},
+    {"service": "artemis", "key": "github_token",      "description": "GitHub PAT (repo scope) for platform self-management tools"},
 ]
 
-# Placeholder values set by setup-secrets.sh — indicates secret exists but has no real value yet.
+# Placeholder values — indicates secret exists but has no real value yet.
 _PLACEHOLDERS = {
     "REPLACE_WITH_RDS_URL",
     "REPLACE_WITH_GOOGLE_CLIENT_ID",
@@ -188,8 +189,11 @@ class SecretsService:
         except ClientError as e:
             return {"success": False, "error": str(e)}
 
-    async def check_required_secrets(self) -> list[dict]:
-        """Check the status of every required platform secret.
+    async def check_required_secrets(self, environment: str = "production") -> list[dict]:
+        """Check the status of every required platform secret for the given environment.
+
+        Secret paths follow the convention: {environment}/{service}/{key}
+        e.g. production/auth/google_client_id
 
         Returns each required secret with:
           - status: 'set' | 'placeholder' | 'missing'
@@ -197,7 +201,7 @@ class SecretsService:
         """
         results = []
         for req in REQUIRED_SECRETS:
-            name = f"{req['service']}/{req['key']}"
+            name = f"{environment}/{req['service']}/{req['key']}"
             status = "missing"
             try:
                 raw = await self._get_raw_value(name)
@@ -212,6 +216,7 @@ class SecretsService:
 
             results.append({
                 "name": name,
+                "environment": environment,
                 "service": req["service"],
                 "key": req["key"],
                 "description": req["description"],

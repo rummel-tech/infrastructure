@@ -186,6 +186,26 @@ class _RequiredSecretTile extends StatelessWidget {
     );
   }
 
+  static bool _isMultiline(String key) =>
+      key.contains('pem') || key.contains('key') && key.contains('private');
+
+  static String? _hintFor(String key) {
+    if (key.contains('pem') || key == 'private_key') {
+      return '-----BEGIN RSA PRIVATE KEY-----\n...';
+    }
+    if (key.contains('database_url') || key.contains('database-url')) {
+      return 'postgresql://user:pass@host:5432/db';
+    }
+    if (key == 'google_client_id' || key == 'google-client-id') {
+      return '123456789-abc.apps.googleusercontent.com';
+    }
+    if (key == 'github_token' || key == 'github-token') {
+      return 'ghp_xxxxxxxxxxxxxxxxxxxx';
+    }
+    if (key.contains('anthropic')) return 'sk-ant-api03-...';
+    return null;
+  }
+
   void _editSecret(BuildContext context) {
     final provider = context.read<DashboardProvider>();
     final valueCtrl = TextEditingController();
@@ -208,14 +228,10 @@ class _RequiredSecretTile extends StatelessWidget {
               controller: valueCtrl,
               decoration: InputDecoration(
                 labelText: 'Value',
-                hintText: secret.key.contains('pem')
-                    ? '-----BEGIN RSA PRIVATE KEY-----\n...'
-                    : secret.key.contains('url')
-                        ? 'postgresql://user:pass@host:5432/db'
-                        : null,
+                hintText: _hintFor(secret.key),
               ),
-              obscureText: !secret.key.contains('pem'),
-              maxLines: secret.key.contains('pem') ? 6 : 1,
+              obscureText: !_isMultiline(secret.key),
+              maxLines: _isMultiline(secret.key) ? 6 : 1,
             ),
           ],
         ),
