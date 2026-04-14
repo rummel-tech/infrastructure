@@ -1,0 +1,188 @@
+name: Run Database Migrations
+
+# Runs migrate_db.py for a service against a target environment.
+#
+# Implementation: launches a one-off ECS Fargate task using the service's
+# current production image with the command overridden to run the migration
+# script. This uses the same task definition (and therefore the same
+# DATABASE_URL secret) as the live service — no credentials handling needed.
+#
+# Usage:
+#   gh workflow run run-migrations.yml \
+#     -f app_name=work-planner \
+#     -f environment=production
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'Service to migrate'
+        required: true
+        type: choice
+        options:
+          - auth
+          - work-planner
+          - workout-planner
+          - meal-planner
+          - home-manager
+          - vehicle-manager
+          - education-planner
+          - content-planner
+          - artemis
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: production
+      dry_run:
+        description: 'Print SQL without executing (if supported by migrate_db.py)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve ECS and network configuration
+        id: config
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
+
+          TASK_DEF="${{ inputs.environment }}-${{ inputs.app_name }}"
+          CLUSTER="${{ inputs.environment }}-cluster"
+          echo "TASK_DEF=$TASK_DEF"   >> $GITHUB_ENV
+          echo "CLUSTER=$CLUSTER"     >> $GITHUB_ENV
+
+          # Get the subnets and security groups from the existing ECS service
+          SVC_JSON=$(aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services "${{ inputs.environment }}-${{ inputs.app_name }}-service" \
+            --region $AWS_REGION \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
+            --output json 2>/dev/null || echo "{}")
+
+          SUBNETS=$(echo "$SVC_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(','.join(d.get('subnets',[])))" 2>/dev/null || echo "")
+          SG=$(echo "$SVC_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(','.join(d.get('securityGroups',[])))" 2>/dev/null || echo "")
+
+          if [ -z "$SUBNETS" ]; then
+            echo "::error::Could not determine subnets from ECS service. Has the service been deployed?"
+            exit 1
+          fi
+
+          echo "SUBNETS=$SUBNETS" >> $GITHUB_ENV
+          echo "SG=$SG"           >> $GITHUB_ENV
+
+      - name: Determine migration command
+        id: cmd
+        run: |
+          # Build the override command. Pass --dry-run if requested.
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            CMD='["python", "migrate_db.py", "--dry-run"]'
+          else
+            CMD='["python", "migrate_db.py"]'
+          fi
+          echo "CMD=$CMD" >> $GITHUB_OUTPUT
+
+      - name: Run migration as one-off ECS task
+        id: run-task
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$TASK_DEF" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"${{ inputs.environment }}-${{ inputs.app_name }}\",\"command\":${{ steps.cmd.outputs.CMD }}}]}" \
+            --region $AWS_REGION \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "::error::Failed to start migration task"
+            exit 1
+          fi
+
+          echo "TASK_ARN=$TASK_ARN" >> $GITHUB_ENV
+          echo "task_arn=$TASK_ARN" >> $GITHUB_OUTPUT
+          echo "Migration task started: $TASK_ARN"
+
+      - name: Wait for migration task to complete
+        run: |
+          echo "Waiting for migration task to finish..."
+          aws ecs wait tasks-stopped \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --region $AWS_REGION
+
+      - name: Check migration exit code
+        run: |
+          TASK_JSON=$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --region $AWS_REGION)
+
+          EXIT_CODE=$(echo "$TASK_JSON" | python3 -c "
+          import json, sys
+          t = json.load(sys.stdin)
+          containers = t['tasks'][0]['containers']
+          for c in containers:
+              if c.get('name') == '${{ inputs.environment }}-${{ inputs.app_name }}':
+                  print(c.get('exitCode', 1))
+                  sys.exit(0)
+          print(1)
+          ")
+
+          STOP_REASON=$(echo "$TASK_JSON" | python3 -c "
+          import json, sys
+          t = json.load(sys.stdin)
+          print(t['tasks'][0].get('stoppedReason', ''))
+          ")
+
+          echo "Exit code: $EXIT_CODE"
+          echo "Stop reason: $STOP_REASON"
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::Migration task exited with code $EXIT_CODE"
+            echo "::error::Stop reason: $STOP_REASON"
+            echo ""
+            echo "View migration logs:"
+            echo "  aws logs tail /ecs/${{ inputs.environment }}-${{ inputs.app_name }} --follow --region $AWS_REGION"
+            exit 1
+          fi
+
+          echo "Migration completed successfully (exit code 0)"
+
+      - name: Summary
+        run: |
+          DRY="${{ inputs.dry_run == 'true' && ' (dry run)' || '' }}"
+          echo "### Migration complete ✅${DRY}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | \`${{ inputs.app_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Task ARN | \`$TASK_ARN\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View logs:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "aws logs tail /ecs/${{ inputs.environment }}-${{ inputs.app_name }} --follow --region $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

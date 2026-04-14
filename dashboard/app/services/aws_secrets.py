@@ -20,8 +20,9 @@ REQUIRED_SECRETS: list[dict] = [
     # vehicle-manager
     {"service": "vehicle-manager", "key": "database_url", "description": "PostgreSQL connection string for vehicle_prod"},
     # work-planner
-    {"service": "work-planner",    "key": "database_url", "description": "PostgreSQL connection string for work_prod"},
-    {"service": "work-planner",    "key": "jwt_secret",   "description": "HS256 JWT signing secret (standalone mode)"},
+    {"service": "work-planner",    "key": "database_url",  "description": "PostgreSQL connection string for work_prod"},
+    {"service": "work-planner",    "key": "jwt_secret",    "description": "HS256 JWT signing secret (standalone mode)"},
+    {"service": "work-planner",    "key": "cors_origins",  "description": "JSON array of allowed CORS origins — must include the production Flutter web URL"},
     # content-planner
     {"service": "content-planner", "key": "database_url", "description": "PostgreSQL connection string for content_prod"},
     {"service": "content-planner", "key": "jwt_secret",   "description": "HS256 JWT signing secret (standalone mode)"},

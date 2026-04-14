@@ -92,6 +92,11 @@ class DashboardProvider extends ChangeNotifier {
   CostForecast? _forecast;
   CostForecast? get forecast => _forecast;
 
+  List<TagCost> _tagCosts = [];
+  List<TagCost> get tagCosts => _tagCosts;
+  double _tagCostsTotal = 0;
+  double get tagCostsTotal => _tagCostsTotal;
+
   bool _loading = false;
   bool get loading => _loading;
 
@@ -317,6 +322,17 @@ class DashboardProvider extends ChangeNotifier {
       }
     } catch (e) {
       _forecast = null;
+    }
+    try {
+      final byTag = await _api.get('/api/costs/by-tag',
+          params: {'tag_key': 'App', 'days': '30'});
+      _tagCosts = (byTag['breakdown'] as List? ?? [])
+          .map((t) => TagCost.fromJson(t))
+          .toList();
+      _tagCostsTotal = (byTag['total'] as num?)?.toDouble() ?? 0;
+    } catch (e) {
+      _tagCosts = [];
+      _tagCostsTotal = 0;
     }
     notifyListeners();
   }

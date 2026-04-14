@@ -1,0 +1,435 @@
+name: Promote to Production
+
+# Promotes the exact artifact currently running in staging to production.
+#
+# Backend:  pulls the staging ECR image (no rebuild), pushes it to the
+#           production ECR repo, registers a new production task definition,
+#           and triggers a rolling ECS deployment.
+#
+# Frontend: Flutter web embeds the API URL at compile time, so the staging
+#           bundle cannot be copied directly. Instead this workflow checks out
+#           the same git SHA that is running in staging and rebuilds it with
+#           the production API URL — guaranteeing identical source code.
+#
+# Usage:
+#   gh workflow run promote-to-production.yml \
+#     -f app_name=work-planner \
+#     -f component=both
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'Service / app to promote'
+        required: true
+        type: choice
+        options:
+          - auth
+          - work-planner
+          - workout-planner
+          - meal-planner
+          - home-manager
+          - vehicle-manager
+          - education-planner
+          - content-planner
+          - artemis
+      component:
+        description: 'What to promote'
+        required: true
+        type: choice
+        options:
+          - both
+          - backend-only
+          - frontend-only
+        default: both
+      staging_ref:
+        description: 'Git SHA deployed to staging (blank = auto-detect from staging ECS)'
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  FLUTTER_VERSION: '3.27.0'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1: Detect the git SHA currently running in staging
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  detect-version:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.detect.outputs.sha }}
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Detect staging SHA
+        id: detect
+        run: |
+          if [ -n "${{ inputs.staging_ref }}" ]; then
+            SHA="${{ inputs.staging_ref }}"
+            echo "Using provided ref: $SHA"
+          else
+            # Get the current task definition ARN from the staging ECS service
+            TASK_DEF_ARN=$(aws ecs describe-services \
+              --cluster staging-cluster \
+              --services "staging-${{ inputs.app_name }}-service" \
+              --region $AWS_REGION \
+              --query 'services[0].taskDefinition' \
+              --output text 2>/dev/null || echo "")
+
+            if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
+              echo "::error::Could not find staging ECS service for ${{ inputs.app_name }}. Has it been deployed?"
+              exit 1
+            fi
+
+            # Extract the image URI from the task definition
+            IMAGE_URI=$(aws ecs describe-task-definition \
+              --task-definition "$TASK_DEF_ARN" \
+              --region $AWS_REGION \
+              --query 'taskDefinition.containerDefinitions[0].image' \
+              --output text)
+
+            # The image tag is the git SHA (format: registry/repo:sha)
+            SHA="${IMAGE_URI##*:}"
+
+            # Strip environment tag if it was tagged :staging rather than a SHA
+            if [ "$SHA" = "staging" ] || [ "$SHA" = "latest" ]; then
+              echo "::warning::Staging image is tagged ':$SHA' — no SHA available. Pass staging_ref manually."
+              SHA="main"
+            fi
+
+            echo "Auto-detected staging SHA: $SHA (from $IMAGE_URI)"
+          fi
+
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Summarise
+        run: |
+          echo "## Promoting ${{ inputs.app_name }} to production" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | ${{ inputs.component }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Git SHA | \`${{ steps.detect.outputs.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Source | staging → production |" >> $GITHUB_STEP_SUMMARY
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 2: Promote backend
+# Pulls the staging ECR image and deploys it to production without rebuilding.
+# ─────────────────────────────────────────────────────────────────────────────
+  promote-backend:
+    needs: detect-version
+    if: inputs.component == 'both' || inputs.component == 'backend-only'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set deployment variables
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "ACCOUNT_ID=$ACCOUNT_ID"            >> $GITHUB_ENV
+          echo "ECR_REGISTRY=$ECR_REGISTRY"        >> $GITHUB_ENV
+          echo "STAGING_REPO=staging-${{ inputs.app_name }}"    >> $GITHUB_ENV
+          echo "PROD_REPO=production-${{ inputs.app_name }}"    >> $GITHUB_ENV
+          echo "ECS_CLUSTER=production-cluster"    >> $GITHUB_ENV
+          echo "ECS_SERVICE=production-${{ inputs.app_name }}-service" >> $GITHUB_ENV
+          echo "CONTAINER=production-${{ inputs.app_name }}"   >> $GITHUB_ENV
+          echo "SHA=${{ needs.detect-version.outputs.sha }}"   >> $GITHUB_ENV
+
+          case "${{ inputs.app_name }}" in
+            auth)              echo "APP_PORT=8090" >> $GITHUB_ENV ;;
+            artemis)           echo "APP_PORT=8080" >> $GITHUB_ENV ;;
+            workout-planner)   echo "APP_PORT=8000" >> $GITHUB_ENV ;;
+            meal-planner)      echo "APP_PORT=8010" >> $GITHUB_ENV ;;
+            home-manager)      echo "APP_PORT=8020" >> $GITHUB_ENV ;;
+            vehicle-manager)   echo "APP_PORT=8030" >> $GITHUB_ENV ;;
+            work-planner)      echo "APP_PORT=8040" >> $GITHUB_ENV ;;
+            education-planner) echo "APP_PORT=8050" >> $GITHUB_ENV ;;
+            content-planner)   echo "APP_PORT=8060" >> $GITHUB_ENV ;;
+          esac
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure production ECR repository exists
+        run: |
+          aws ecr describe-repositories \
+            --repository-names "$PROD_REPO" \
+            --region $AWS_REGION > /dev/null 2>&1 || \
+          aws ecr create-repository \
+            --repository-name "$PROD_REPO" \
+            --image-scanning-configuration scanOnPush=true \
+            --region $AWS_REGION
+
+      - name: Pull staging image and push to production ECR
+        run: |
+          STAGING_IMAGE="$ECR_REGISTRY/$STAGING_REPO:$SHA"
+          PROD_IMAGE="$ECR_REGISTRY/$PROD_REPO:$SHA"
+
+          echo "Pulling: $STAGING_IMAGE"
+          docker pull "$STAGING_IMAGE"
+
+          echo "Tagging for production..."
+          docker tag "$STAGING_IMAGE" "$PROD_IMAGE"
+          docker tag "$STAGING_IMAGE" "$ECR_REGISTRY/$PROD_REPO:production"
+          docker tag "$STAGING_IMAGE" "$ECR_REGISTRY/$PROD_REPO:latest"
+
+          echo "Pushing to production ECR..."
+          docker push "$PROD_IMAGE"
+          docker push "$ECR_REGISTRY/$PROD_REPO:production"
+          docker push "$ECR_REGISTRY/$PROD_REPO:latest"
+
+          echo "PROD_IMAGE=$PROD_IMAGE" >> $GITHUB_ENV
+
+      - name: Resolve secret ARNs
+        id: secrets
+        run: |
+          BASE="arn:aws:secretsmanager:$AWS_REGION:$ACCOUNT_ID:secret:production/${{ inputs.app_name }}"
+          echo "database_url_arn=${BASE}/database_url" >> $GITHUB_OUTPUT
+          echo "jwt_secret_arn=${BASE}/jwt_secret"     >> $GITHUB_OUTPUT
+          echo "cors_origins_arn=${BASE}/cors_origins"  >> $GITHUB_OUTPUT
+
+          NEEDS_JWT=false
+          case "${{ inputs.app_name }}" in
+            workout-planner|work-planner|education-planner|content-planner) NEEDS_JWT=true ;;
+          esac
+          echo "needs_jwt=$NEEDS_JWT" >> $GITHUB_OUTPUT
+
+          if aws secretsmanager describe-secret \
+              --secret-id "production/${{ inputs.app_name }}/cors_origins" \
+              --region $AWS_REGION > /dev/null 2>&1; then
+            echo "has_cors_origins=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_cors_origins=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Register production task definition
+        run: |
+          cat > /tmp/task-def.json << EOF
+          {
+            "family": "production-${{ inputs.app_name }}",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "512",
+            "memory": "1024",
+            "executionRoleArn": "arn:aws:iam::$ACCOUNT_ID:role/production-ecs-task-execution-role",
+            "taskRoleArn": "arn:aws:iam::$ACCOUNT_ID:role/production-ecs-task-role",
+            "containerDefinitions": [
+              {
+                "name": "$CONTAINER",
+                "image": "$PROD_IMAGE",
+                "essential": true,
+                "portMappings": [{"containerPort": $APP_PORT, "protocol": "tcp"}],
+                "environment": [
+                  {"name": "PORT",        "value": "$APP_PORT"},
+                  {"name": "ENVIRONMENT", "value": "production"},
+                  {"name": "LOG_LEVEL",   "value": "info"},
+                  {"name": "APP_NAME",    "value": "${{ inputs.app_name }}"}
+                ],
+                "secrets": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": "${{ steps.secrets.outputs.database_url_arn }}"
+                  }$(if [ "${{ steps.secrets.outputs.needs_jwt }}" = "true" ]; then echo ',
+                  {
+                    "name": "JWT_SECRET",
+                    "valueFrom": "${{ steps.secrets.outputs.jwt_secret_arn }}"
+                  }'; fi)$(if [ "${{ steps.secrets.outputs.has_cors_origins }}" = "true" ]; then echo ',
+                  {
+                    "name": "CORS_ORIGINS",
+                    "valueFrom": "${{ steps.secrets.outputs.cors_origins_arn }}"
+                  }'; fi)
+                ],
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "/ecs/production-${{ inputs.app_name }}",
+                    "awslogs-region": "$AWS_REGION",
+                    "awslogs-stream-prefix": "ecs",
+                    "awslogs-create-group": "true"
+                  }
+                },
+                "healthCheck": {
+                  "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:$APP_PORT/health')\" || exit 1"],
+                  "interval": 30,
+                  "timeout": 5,
+                  "retries": 3,
+                  "startPeriod": 60
+                }
+              }
+            ]
+          }
+          EOF
+
+          aws ecs register-task-definition \
+            --cli-input-json file:///tmp/task-def.json \
+            --region $AWS_REGION
+
+      - name: Deploy to production ECS
+        run: |
+          SERVICE_STATUS=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region $AWS_REGION \
+            --query 'services[0].status' \
+            --output text 2>/dev/null || echo "")
+
+          if [ "$SERVICE_STATUS" != "ACTIVE" ]; then
+            echo "::error::Production ECS service '$ECS_SERVICE' does not exist. Run Terraform apply first."
+            exit 1
+          fi
+
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "production-${{ inputs.app_name }}" \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+          echo "Waiting for service to stabilise..."
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region $AWS_REGION
+
+      - name: Backend promotion summary
+        run: |
+          echo "### Backend promoted ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Image \`$PROD_IMAGE\` is live on \`$ECS_SERVICE\`." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "aws logs tail /ecs/production-${{ inputs.app_name }} --follow --region $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 3: Promote frontend
+# Rebuilds the Flutter web app from the same git SHA that ran in staging,
+# targeting the production API URL. Deploys to production S3 + CloudFront.
+# ─────────────────────────────────────────────────────────────────────────────
+  promote-frontend:
+    needs: detect-version
+    if: inputs.component == 'both' || inputs.component == 'frontend-only'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout infrastructure repo
+        uses: actions/checkout@v4
+
+      - name: Checkout app repo at staging SHA
+        uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/${{ inputs.app_name }}
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ needs.detect-version.outputs.sha }}
+          path: app-repo
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve production S3 bucket and API URL
+        id: vars
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "S3_BUCKET=production-${{ inputs.app_name }}-frontend-${ACCOUNT_ID}" >> $GITHUB_OUTPUT
+
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${{ inputs.app_name }} Frontend Distribution (production)'].Id" \
+            --output text 2>/dev/null || echo "")
+          echo "CLOUDFRONT_DIST_ID=${DIST_ID}" >> $GITHUB_OUTPUT
+
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "production-alb" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$ALB_DNS" ] && [ "$ALB_DNS" != "None" ]; then
+            echo "API_URL=https://${ALB_DNS}/api/${{ inputs.app_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::Could not resolve production ALB DNS. Set api_url manually if needed."
+            echo "API_URL=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Enable Flutter web
+        run: flutter config --enable-web
+
+      - name: Get dependencies
+        working-directory: app-repo
+        run: flutter pub get
+
+      - name: Build Flutter web (production, same SHA as staging)
+        working-directory: app-repo
+        run: |
+          flutter build web --release \
+            --base-href "/" \
+            --dart-define=ENVIRONMENT=production \
+            --dart-define=API_URL=${{ steps.vars.outputs.API_URL }}
+
+          # Embed the promoted SHA into a version file for traceability
+          echo "{\"sha\":\"${{ needs.detect-version.outputs.sha }}\",\"promoted_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"source\":\"staging\"}" \
+            > build/web/version.json
+
+      - name: Deploy to production S3
+        run: |
+          # Long-lived assets (hashed filenames)
+          aws s3 sync app-repo/build/web "s3://${{ steps.vars.outputs.S3_BUCKET }}" \
+            --delete \
+            --cache-control "max-age=31536000,public" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          # index.html — never cache
+          aws s3 cp app-repo/build/web/index.html \
+            "s3://${{ steps.vars.outputs.S3_BUCKET }}/index.html" \
+            --cache-control "no-cache,no-store,must-revalidate"
+
+          # JSON files (manifest, version) — never cache
+          find app-repo/build/web -name "*.json" -exec \
+            aws s3 cp {} "s3://${{ steps.vars.outputs.S3_BUCKET }}/$(basename {})" \
+            --cache-control "no-cache,no-store,must-revalidate" \;
+
+      - name: Invalidate CloudFront cache
+        if: steps.vars.outputs.CLOUDFRONT_DIST_ID != ''
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.vars.outputs.CLOUDFRONT_DIST_ID }} \
+            --paths "/*"
+
+      - name: Frontend promotion summary
+        run: |
+          echo "### Frontend promoted ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Built from SHA \`${{ needs.detect-version.outputs.sha }}\` (same source as staging)." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| S3 Bucket | \`${{ steps.vars.outputs.S3_BUCKET }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| API URL | \`${{ steps.vars.outputs.API_URL }}\` |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ steps.vars.outputs.CLOUDFRONT_DIST_ID }}" ]; then
+            echo "| CloudFront | \`${{ steps.vars.outputs.CLOUDFRONT_DIST_ID }}\` (invalidated) |" >> $GITHUB_STEP_SUMMARY
+          fi

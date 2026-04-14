@@ -38,6 +38,7 @@ on:
           - meal-planner
           - home-manager
           - vehicle-manager
+          - work-planner
           - education-planner
           - content-planner
           - focus-training
@@ -111,7 +112,9 @@ jobs:
               --query 'LoadBalancers[0].DNSName' \
               --output text 2>/dev/null || echo "")
             if [ -n "$ALB_DNS" ] && [ "$ALB_DNS" != "None" ]; then
-              echo "API_URL=http://${ALB_DNS}/api/${{ inputs.app_name }}" >> $GITHUB_OUTPUT
+              PROTO="https"
+              if [ "${{ inputs.environment }}" = "staging" ]; then PROTO="http"; fi
+              echo "API_URL=${PROTO}://${ALB_DNS}/api/${{ inputs.app_name }}" >> $GITHUB_OUTPUT
             else
               echo "API_URL=" >> $GITHUB_OUTPUT
             fi

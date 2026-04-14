@@ -43,6 +43,18 @@ class DailyCost {
       );
 }
 
+class TagCost {
+  final String tag;
+  final double amount;
+
+  TagCost({required this.tag, required this.amount});
+
+  factory TagCost.fromJson(Map<String, dynamic> json) => TagCost(
+        tag: json['tag'] ?? '',
+        amount: (json['amount'] as num?)?.toDouble() ?? 0,
+      );
+}
+
 class CostForecast {
   final double forecastedAmount;
   final String unit;

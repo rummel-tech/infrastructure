@@ -1,0 +1,107 @@
+name: Security Scan — Work Planner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'work-planner/**'
+      - '.github/workflows/security-scan-work-planner.yml'
+  pull_request:
+    paths:
+      - 'work-planner/**'
+  schedule:
+    # Weekly scan every Monday at 08:00 UTC
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  trivy-scan:
+    name: Trivy vulnerability scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout services repo
+        uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Run Trivy on filesystem (dependencies + IaC)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: work-planner
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          exit-code: '0'
+
+      - name: Upload filesystem scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs.sarif
+          category: work-planner-fs
+
+  sast:
+    name: Bandit SAST scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout services repo
+        uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/services
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit
+        run: |
+          bandit -r work-planner \
+            --exclude work-planner/.venv,work-planner/__pycache__,work-planner/tests \
+            -f json \
+            -o bandit-report.json \
+            --severity-level medium || true
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 30
+
+      - name: Fail on high-severity findings
+        run: |
+          HIGH=$(python3 -c "
+          import json
+          try:
+              data = json.load(open('bandit-report.json'))
+              highs = [r for r in data.get('results', []) if r.get('issue_severity') == 'HIGH']
+              print(len(highs))
+          except:
+              print(0)
+          ")
+          if [ "$HIGH" -gt "0" ]; then
+            echo "::error::Bandit found $HIGH HIGH severity issues in work-planner"
+            python3 -c "
+          import json
+          data = json.load(open('bandit-report.json'))
+          for r in data['results']:
+              if r.get('issue_severity') == 'HIGH':
+                  print(f\"  [{r['issue_severity']}] {r['issue_text']} — {r['filename']}:{r['line_number']}\")
+          "
+            exit 1
+          fi
+          echo "No HIGH severity findings."

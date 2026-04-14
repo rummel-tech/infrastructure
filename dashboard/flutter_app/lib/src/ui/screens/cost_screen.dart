@@ -15,7 +15,8 @@ class CostScreen extends StatelessWidget {
 
     final hasCostData = provider.monthlyCosts.isNotEmpty ||
         provider.serviceCosts.isNotEmpty ||
-        provider.dailyCosts.isNotEmpty;
+        provider.dailyCosts.isNotEmpty ||
+        provider.tagCosts.isNotEmpty;
 
     return RefreshIndicator(
       onRefresh: () => provider.loadCosts(),
@@ -53,6 +54,30 @@ class CostScreen extends StatelessWidget {
             Text('Monthly Trend', style: theme.textTheme.titleSmall),
             const SizedBox(height: 12),
             _MonthlyChart(months: provider.monthlyCosts),
+            const SizedBox(height: 24),
+          ],
+
+          // Cost by application (tag-based)
+          if (provider.tagCosts.isNotEmpty) ...[
+            Row(
+              children: [
+                Text('Cost by Application', style: theme.textTheme.titleSmall),
+                const Spacer(),
+                Text(
+                  '\$${provider.tagCostsTotal.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _TagCostList(
+              tags: provider.tagCosts,
+              total: provider.tagCostsTotal,
+            ),
             const SizedBox(height: 24),
           ],
 
@@ -292,6 +317,94 @@ class _MonthlyChart extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _TagCostList extends StatelessWidget {
+  final List<TagCost> tags;
+  final double total;
+  const _TagCostList({required this.tags, required this.total});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Column(
+        children: [
+          for (var i = 0; i < tags.length; i++) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Text(
+                      tags[i].tag,
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: LinearProgressIndicator(
+                        value: total > 0 ? tags[i].amount / total : 0,
+                        minHeight: 6,
+                        backgroundColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        color: _tagColor(i),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 65,
+                    child: Text(
+                      '\$${tags[i].amount.toStringAsFixed(2)}',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: 'monospace'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 40,
+                    child: Text(
+                      total > 0
+                          ? '${(tags[i].amount / total * 100).round()}%'
+                          : '',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (i < tags.length - 1) const Divider(height: 1),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Color _tagColor(int index) {
+    const colors = [
+      RummelBlueColors.primary500,
+      RummelBlueColors.success500,
+      RummelBlueColors.warning500,
+      Colors.teal,
+      Colors.purple,
+      Colors.orange,
+      Colors.cyan,
+      RummelBlueColors.error500,
+    ];
+    return colors[index % colors.length];
   }
 }
 

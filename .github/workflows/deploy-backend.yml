@@ -147,8 +147,10 @@ jobs:
         id: secrets
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          echo "database_url_arn=arn:aws:secretsmanager:$AWS_REGION:$ACCOUNT_ID:secret:${{ inputs.environment }}/${{ inputs.app_name }}/database_url" >> $GITHUB_OUTPUT
-          echo "jwt_secret_arn=arn:aws:secretsmanager:$AWS_REGION:$ACCOUNT_ID:secret:${{ inputs.environment }}/${{ inputs.app_name }}/jwt_secret" >> $GITHUB_OUTPUT
+          SECRET_BASE="arn:aws:secretsmanager:$AWS_REGION:$ACCOUNT_ID:secret:${{ inputs.environment }}/${{ inputs.app_name }}"
+          echo "database_url_arn=${SECRET_BASE}/database_url" >> $GITHUB_OUTPUT
+          echo "jwt_secret_arn=${SECRET_BASE}/jwt_secret" >> $GITHUB_OUTPUT
+          echo "cors_origins_arn=${SECRET_BASE}/cors_origins" >> $GITHUB_OUTPUT
 
           # Services that require JWT_SECRET in their task definition
           NEEDS_JWT=false
@@ -156,6 +158,15 @@ jobs:
             workout-planner|work-planner|education-planner|content-planner) NEEDS_JWT=true ;;
           esac
           echo "needs_jwt=$NEEDS_JWT" >> $GITHUB_OUTPUT
+
+          # Check if a CORS_ORIGINS secret exists for this service/environment
+          if aws secretsmanager describe-secret \
+              --secret-id "${{ inputs.environment }}/${{ inputs.app_name }}/cors_origins" \
+              --region $AWS_REGION > /dev/null 2>&1; then
+            echo "has_cors_origins=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_cors_origins=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create/Update ECS task definition
         id: task-def
@@ -200,6 +211,10 @@ jobs:
                   {
                     "name": "JWT_SECRET",
                     "valueFrom": "${{ steps.secrets.outputs.jwt_secret_arn }}"
+                  }'; fi)$(if [ "${{ steps.secrets.outputs.has_cors_origins }}" = "true" ]; then echo ',
+                  {
+                    "name": "CORS_ORIGINS",
+                    "valueFrom": "${{ steps.secrets.outputs.cors_origins_arn }}"
                   }'; fi)
                 ],
                 "logConfiguration": {

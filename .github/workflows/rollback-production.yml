@@ -1,0 +1,326 @@
+name: Rollback Production
+
+# Rolls back a production service to a specific previous version.
+#
+# Backend:  pulls the target SHA image from production ECR (already there
+#           from a previous promotion), registers a new task definition
+#           pointing at it, and triggers a rolling ECS deployment.
+#
+# Frontend: checks out the target SHA and rebuilds with the production
+#           API URL, then deploys to S3/CloudFront.
+#
+# Usage:
+#   gh workflow run rollback-production.yml \
+#     -f app_name=work-planner \
+#     -f target_sha=abc1234 \
+#     -f component=both
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'Service to roll back'
+        required: true
+        type: choice
+        options:
+          - auth
+          - work-planner
+          - workout-planner
+          - meal-planner
+          - home-manager
+          - vehicle-manager
+          - education-planner
+          - content-planner
+          - artemis
+      target_sha:
+        description: 'Git SHA / image tag to roll back to (required)'
+        required: true
+      component:
+        description: 'What to roll back'
+        required: true
+        type: choice
+        options:
+          - both
+          - backend-only
+          - frontend-only
+        default: both
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  FLUTTER_VERSION: '3.27.0'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1: Roll back backend
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  rollback-backend:
+    if: inputs.component == 'both' || inputs.component == 'backend-only'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set deployment variables
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "ACCOUNT_ID=$ACCOUNT_ID"          >> $GITHUB_ENV
+          echo "ECR_REGISTRY=$ECR_REGISTRY"      >> $GITHUB_ENV
+          echo "PROD_REPO=production-${{ inputs.app_name }}"   >> $GITHUB_ENV
+          echo "ECS_CLUSTER=production-cluster"  >> $GITHUB_ENV
+          echo "ECS_SERVICE=production-${{ inputs.app_name }}-service" >> $GITHUB_ENV
+          echo "CONTAINER=production-${{ inputs.app_name }}"  >> $GITHUB_ENV
+          echo "SHA=${{ inputs.target_sha }}"    >> $GITHUB_ENV
+
+          case "${{ inputs.app_name }}" in
+            auth)              echo "APP_PORT=8090" >> $GITHUB_ENV ;;
+            artemis)           echo "APP_PORT=8080" >> $GITHUB_ENV ;;
+            workout-planner)   echo "APP_PORT=8000" >> $GITHUB_ENV ;;
+            meal-planner)      echo "APP_PORT=8010" >> $GITHUB_ENV ;;
+            home-manager)      echo "APP_PORT=8020" >> $GITHUB_ENV ;;
+            vehicle-manager)   echo "APP_PORT=8030" >> $GITHUB_ENV ;;
+            work-planner)      echo "APP_PORT=8040" >> $GITHUB_ENV ;;
+            education-planner) echo "APP_PORT=8050" >> $GITHUB_ENV ;;
+            content-planner)   echo "APP_PORT=8060" >> $GITHUB_ENV ;;
+          esac
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Verify rollback image exists in production ECR
+        run: |
+          TARGET_IMAGE="$ECR_REGISTRY/$PROD_REPO:$SHA"
+          if ! docker manifest inspect "$TARGET_IMAGE" > /dev/null 2>&1; then
+            echo "::error::Image $TARGET_IMAGE not found in production ECR."
+            echo "::error::Only SHAs previously promoted to production can be used for rollback."
+            echo "::error::Run promote-to-production.yml with staging_ref=$SHA first."
+            exit 1
+          fi
+          echo "TARGET_IMAGE=$TARGET_IMAGE" >> $GITHUB_ENV
+          echo "Rollback target verified: $TARGET_IMAGE"
+
+      - name: Resolve secret ARNs
+        id: secrets
+        run: |
+          BASE="arn:aws:secretsmanager:$AWS_REGION:$ACCOUNT_ID:secret:production/${{ inputs.app_name }}"
+          echo "database_url_arn=${BASE}/database_url" >> $GITHUB_OUTPUT
+          echo "jwt_secret_arn=${BASE}/jwt_secret"     >> $GITHUB_OUTPUT
+          echo "cors_origins_arn=${BASE}/cors_origins"  >> $GITHUB_OUTPUT
+
+          NEEDS_JWT=false
+          case "${{ inputs.app_name }}" in
+            workout-planner|work-planner|education-planner|content-planner) NEEDS_JWT=true ;;
+          esac
+          echo "needs_jwt=$NEEDS_JWT" >> $GITHUB_OUTPUT
+
+          if aws secretsmanager describe-secret \
+              --secret-id "production/${{ inputs.app_name }}/cors_origins" \
+              --region $AWS_REGION > /dev/null 2>&1; then
+            echo "has_cors_origins=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_cors_origins=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Register rollback task definition
+        run: |
+          cat > /tmp/task-def.json << EOF
+          {
+            "family": "production-${{ inputs.app_name }}",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "512",
+            "memory": "1024",
+            "executionRoleArn": "arn:aws:iam::$ACCOUNT_ID:role/production-ecs-task-execution-role",
+            "taskRoleArn": "arn:aws:iam::$ACCOUNT_ID:role/production-ecs-task-role",
+            "containerDefinitions": [
+              {
+                "name": "$CONTAINER",
+                "image": "$TARGET_IMAGE",
+                "essential": true,
+                "portMappings": [{"containerPort": $APP_PORT, "protocol": "tcp"}],
+                "environment": [
+                  {"name": "PORT",        "value": "$APP_PORT"},
+                  {"name": "ENVIRONMENT", "value": "production"},
+                  {"name": "LOG_LEVEL",   "value": "info"},
+                  {"name": "APP_NAME",    "value": "${{ inputs.app_name }}"}
+                ],
+                "secrets": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": "${{ steps.secrets.outputs.database_url_arn }}"
+                  }$(if [ "${{ steps.secrets.outputs.needs_jwt }}" = "true" ]; then echo ',
+                  {
+                    "name": "JWT_SECRET",
+                    "valueFrom": "${{ steps.secrets.outputs.jwt_secret_arn }}"
+                  }'; fi)$(if [ "${{ steps.secrets.outputs.has_cors_origins }}" = "true" ]; then echo ',
+                  {
+                    "name": "CORS_ORIGINS",
+                    "valueFrom": "${{ steps.secrets.outputs.cors_origins_arn }}"
+                  }'; fi)
+                ],
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "/ecs/production-${{ inputs.app_name }}",
+                    "awslogs-region": "$AWS_REGION",
+                    "awslogs-stream-prefix": "ecs",
+                    "awslogs-create-group": "true"
+                  }
+                },
+                "healthCheck": {
+                  "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:$APP_PORT/health')\" || exit 1"],
+                  "interval": 30,
+                  "timeout": 5,
+                  "retries": 3,
+                  "startPeriod": 60
+                }
+              }
+            ]
+          }
+          EOF
+
+          aws ecs register-task-definition \
+            --cli-input-json file:///tmp/task-def.json \
+            --region $AWS_REGION
+
+      - name: Deploy rollback to production ECS
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "production-${{ inputs.app_name }}" \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+          echo "Waiting for service to stabilise..."
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region $AWS_REGION
+
+      - name: Rollback summary
+        run: |
+          echo "### Backend rolled back ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | \`$ECS_SERVICE\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rolled back to | \`$SHA\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`$TARGET_IMAGE\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "aws logs tail /ecs/production-${{ inputs.app_name }} --follow --region $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 2: Roll back frontend
+# Rebuilds from the target SHA with the production API URL.
+# ─────────────────────────────────────────────────────────────────────────────
+  rollback-frontend:
+    if: inputs.component == 'both' || inputs.component == 'frontend-only'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout infrastructure repo
+        uses: actions/checkout@v4
+
+      - name: Checkout app repo at rollback SHA
+        uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/${{ inputs.app_name }}
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ inputs.target_sha }}
+          path: app-repo
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve production S3 bucket and API URL
+        id: vars
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "S3_BUCKET=production-${{ inputs.app_name }}-frontend-${ACCOUNT_ID}" >> $GITHUB_OUTPUT
+
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${{ inputs.app_name }} Frontend Distribution (production)'].Id" \
+            --output text 2>/dev/null || echo "")
+          echo "CLOUDFRONT_DIST_ID=${DIST_ID}" >> $GITHUB_OUTPUT
+
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "production-alb" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$ALB_DNS" ] && [ "$ALB_DNS" != "None" ]; then
+            echo "API_URL=https://${ALB_DNS}/api/${{ inputs.app_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::Could not resolve production ALB DNS."
+            echo "API_URL=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Enable Flutter web
+        run: flutter config --enable-web
+
+      - name: Get dependencies
+        working-directory: app-repo
+        run: flutter pub get
+
+      - name: Build Flutter web (rollback SHA)
+        working-directory: app-repo
+        run: |
+          flutter build web --release \
+            --base-href "/" \
+            --dart-define=ENVIRONMENT=production \
+            --dart-define=API_URL=${{ steps.vars.outputs.API_URL }}
+
+          echo "{\"sha\":\"${{ inputs.target_sha }}\",\"rolled_back_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"source\":\"rollback\"}" \
+            > build/web/version.json
+
+      - name: Deploy rollback to production S3
+        run: |
+          aws s3 sync app-repo/build/web "s3://${{ steps.vars.outputs.S3_BUCKET }}" \
+            --delete \
+            --cache-control "max-age=31536000,public" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          aws s3 cp app-repo/build/web/index.html \
+            "s3://${{ steps.vars.outputs.S3_BUCKET }}/index.html" \
+            --cache-control "no-cache,no-store,must-revalidate"
+
+          find app-repo/build/web -name "*.json" -exec \
+            aws s3 cp {} "s3://${{ steps.vars.outputs.S3_BUCKET }}/$(basename {})" \
+            --cache-control "no-cache,no-store,must-revalidate" \;
+
+      - name: Invalidate CloudFront cache
+        if: steps.vars.outputs.CLOUDFRONT_DIST_ID != ''
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.vars.outputs.CLOUDFRONT_DIST_ID }} \
+            --paths "/*"
+
+      - name: Frontend rollback summary
+        run: |
+          echo "### Frontend rolled back ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Rebuilt from SHA \`${{ inputs.target_sha }}\` (rollback)." >> $GITHUB_STEP_SUMMARY

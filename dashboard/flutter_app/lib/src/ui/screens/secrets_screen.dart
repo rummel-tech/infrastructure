@@ -46,6 +46,7 @@ class _RequiredSecretsTab extends StatelessWidget {
     final required = provider.requiredSecrets;
     final summary = provider.requiredSecretsSummary;
     final theme = Theme.of(context);
+    final env = provider.environment;
 
     final byService = <String, List<RequiredSecret>>{};
     for (final s in required) {
@@ -58,7 +59,7 @@ class _RequiredSecretsTab extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           if (summary != null) ...[
-            _SummaryBanner(summary: summary),
+            _SummaryBanner(summary: summary, environment: env),
             const SizedBox(height: 16),
           ],
           if (required.isEmpty && !provider.loading)
@@ -103,11 +104,13 @@ class _RequiredSecretsTab extends StatelessWidget {
 
 class _SummaryBanner extends StatelessWidget {
   final RequiredSecretsSummary summary;
-  const _SummaryBanner({required this.summary});
+  final String environment;
+  const _SummaryBanner({required this.summary, required this.environment});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final envLabel = environment[0].toUpperCase() + environment.substring(1);
     final color = summary.ready
         ? Colors.green
         : summary.missing > 0
@@ -132,8 +135,8 @@ class _SummaryBanner extends StatelessWidget {
                 children: [
                   Text(
                     summary.ready
-                        ? 'All secrets configured — ready for production'
-                        : 'Production secrets incomplete',
+                        ? 'All $envLabel secrets configured'
+                        : '$envLabel secrets incomplete',
                     style: theme.textTheme.titleSmall
                         ?.copyWith(color: color, fontWeight: FontWeight.bold),
                   ),
@@ -189,6 +192,10 @@ class _RequiredSecretTile extends StatelessWidget {
   static bool _isMultiline(String key) =>
       key.contains('pem') || key.contains('key') && key.contains('private');
 
+  // Values that are not sensitive and should be shown as plain text
+  static bool _isPlainText(String key) =>
+      key.contains('cors_origins') || key.contains('cors-origins');
+
   static String? _hintFor(String key) {
     if (key.contains('pem') || key == 'private_key') {
       return '-----BEGIN RSA PRIVATE KEY-----\n...';
@@ -203,6 +210,9 @@ class _RequiredSecretTile extends StatelessWidget {
       return 'ghp_xxxxxxxxxxxxxxxxxxxx';
     }
     if (key.contains('anthropic')) return 'sk-ant-api03-...';
+    if (key.contains('cors_origins') || key.contains('cors-origins')) {
+      return '["https://your-app.example.com","https://www.your-app.example.com"]';
+    }
     return null;
   }
 
@@ -230,7 +240,7 @@ class _RequiredSecretTile extends StatelessWidget {
                 labelText: 'Value',
                 hintText: _hintFor(secret.key),
               ),
-              obscureText: !_isMultiline(secret.key),
+              obscureText: !_isMultiline(secret.key) && !_isPlainText(secret.key),
               maxLines: _isMultiline(secret.key) ? 6 : 1,
             ),
           ],
