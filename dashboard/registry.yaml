@@ -78,6 +78,7 @@ backend_services:
   frontend: content_planner
 flutter_apps:
 - name: artemis_mobile
+  display_name: Artemis
   repo: artemis_mobile
   description: Unified Artemis Personal OS shell
   platforms:
@@ -90,6 +91,7 @@ flutter_apps:
   - rummel_blue_theme
   has_tests: true
 - name: artemis_app
+  display_name: Artemis (Legacy)
   repo: artemis_app
   description: Legacy Artemis shell (to be deprecated)
   platforms:
@@ -98,6 +100,7 @@ flutter_apps:
   depends_on: []
   has_tests: true
 - name: infrastructure_dashboard
+  display_name: Infrastructure Dashboard
   repo: infrastructure
   description: Platform management — secrets, builds, services, catalog
   platforms:
@@ -109,6 +112,7 @@ flutter_apps:
   - rummel_blue_theme
   has_tests: true
 - name: workout_planner
+  display_name: Workout Planner
   repo: workout-planner
   description: AI-powered fitness coaching app
   platforms:
@@ -121,6 +125,7 @@ flutter_apps:
   - rummel_blue_theme
   has_tests: true
 - name: artemis_work_planner
+  display_name: Work Planner
   repo: work-planner
   description: Work planning for corporate and entrepreneurial endeavors
   platforms:
@@ -135,6 +140,7 @@ flutter_apps:
   - rummel_blue_theme
   has_tests: true
 - name: content_planner
+  display_name: Content Planner
   repo: content-planner
   description: Intentional audio-first content consumption
   platforms:
@@ -145,6 +151,7 @@ flutter_apps:
   depends_on: []
   has_tests: true
 - name: education_planner
+  display_name: Education Planner
   repo: education-planner
   description: Education goals and weekly activity plans
   platforms:
@@ -155,6 +162,7 @@ flutter_apps:
   depends_on: []
   has_tests: true
 - name: focus_training
+  display_name: Focus Training
   repo: focus-training
   description: Gamified focus training with XP, levels, and achievements
   platforms:
@@ -165,6 +173,7 @@ flutter_apps:
   - rummel_blue_theme
   has_tests: true
 - name: meals_app
+  display_name: Meal Planner
   repo: meal-planner
   description: Meal planning application
   platforms:
@@ -177,6 +186,7 @@ flutter_apps:
   - meals_ui
   has_tests: true
 - name: home_app
+  display_name: Home Manager
   repo: home-manager
   description: Home management application
   platforms:
@@ -189,6 +199,7 @@ flutter_apps:
   - home_ui
   has_tests: true
 - name: vehicle_app
+  display_name: Vehicle Manager
   repo: vehicle-manager
   description: Vehicle management application
   platforms:
@@ -201,6 +212,7 @@ flutter_apps:
   - vehicle_ui
   has_tests: true
 - name: investment_manager
+  display_name: Investment Manager
   repo: investment-manager
   description: Portfolio tracking, analysis, and tax insights
   platforms:

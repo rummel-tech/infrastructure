@@ -182,6 +182,14 @@ class GitHubActionsService:
             page += 1
         return [r for r in all_repos if not r.get("archived")]
 
+    async def list_repo_secrets(self, repo: str) -> list[str]:
+        """Return secret names (not values) for a repo. Requires secrets:read scope."""
+        url = f"{self.BASE_URL}/repos/{self.org}/{repo}/actions/secrets"
+        data = await self._get(url, params={"per_page": 100})
+        if isinstance(data, dict):
+            return []  # error or no permission — return empty, caller handles gracefully
+        return [s["name"] for s in data.get("secrets", [])]
+
     def _calc_duration(self, start: str | None, end: str | None) -> str:
         if not start or not end:
             return ""

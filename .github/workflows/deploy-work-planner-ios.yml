@@ -1,8 +1,8 @@
-name: Deploy Workout Planner iOS
+name: Deploy Work Planner iOS
 
 on:
   repository_dispatch:
-    types: [deploy-workout-planner-ios]
+    types: [deploy-work-planner-ios]
   workflow_dispatch:
     inputs:
       repo_ref:
@@ -31,10 +31,10 @@ jobs:
       - name: Checkout infrastructure repo
         uses: actions/checkout@v4
 
-      - name: Checkout workout-planner repo
+      - name: Checkout work-planner repo
         uses: actions/checkout@v4
         with:
-          repository: rummel-tech/workout-planner
+          repository: rummel-tech/work-planner
           ref: ${{ env.APP_REF }}
           path: app-repo
 
@@ -76,8 +76,7 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
-          PROVISIONING_PROFILE_NAME: ${{ secrets.WORKOUT_PLANNER_PROVISIONING_PROFILE_NAME }}
-          REVERSED_CLIENT_ID: ${{ secrets.WORKOUT_PLANNER_REVERSED_CLIENT_ID }}
+          PROVISIONING_PROFILE_NAME: ${{ secrets.WORK_PLANNER_PROVISIONING_PROFILE_NAME }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
         run: bundle exec fastlane beta
@@ -86,14 +85,14 @@ jobs:
         if: ${{ github.event.inputs.deploy_target != 'testflight' }}
         uses: actions/upload-artifact@v4
         with:
-          name: workout-planner-ios-build-${{ env.APP_REF }}
+          name: work-planner-ios-build-${{ env.APP_REF }}
           path: app-repo/build/ios/iphoneos/Runner.app
           retention-days: 30
 
       - name: Build summary
         run: |
           if [[ "${{ github.event.inputs.deploy_target }}" == "testflight" ]]; then
-            echo "Deployed workout-planner@${{ env.APP_REF }} to TestFlight"
+            echo "Deployed work-planner@${{ env.APP_REF }} to TestFlight"
           else
-            echo "workout-planner@${{ env.APP_REF }} build artifact uploaded"
+            echo "work-planner@${{ env.APP_REF }} build artifact uploaded"
           fi

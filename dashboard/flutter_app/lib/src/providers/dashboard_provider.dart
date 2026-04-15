@@ -6,6 +6,7 @@ import '../models/ecs_service.dart';
 import '../models/catalog_item.dart';
 import '../models/infrastructure.dart';
 import '../models/cost_data.dart';
+import '../models/ios_status.dart';
 import '../services/api_client.dart';
 
 class DashboardProvider extends ChangeNotifier {
@@ -97,6 +98,10 @@ class DashboardProvider extends ChangeNotifier {
   double _tagCostsTotal = 0;
   double get tagCostsTotal => _tagCostsTotal;
 
+  // iOS / Mobile state
+  List<IosAppStatus> _iosApps = [];
+  List<IosAppStatus> get iosApps => _iosApps;
+
   bool _loading = false;
   bool get loading => _loading;
 
@@ -134,6 +139,7 @@ class DashboardProvider extends ChangeNotifier {
       loadCatalog(),
       loadInfrastructureSummary(),
       loadCosts(),
+      loadIosStatus(),
     ]);
 
     _loading = false;
@@ -440,5 +446,24 @@ class DashboardProvider extends ChangeNotifier {
 
   Future<Map<String, dynamic>> compareEnvironments() async {
     return _api.get('/api/deployments/compare');
+  }
+
+  // ------------------------------------------------------------------
+  // Mobile / iOS
+  // ------------------------------------------------------------------
+
+  Future<void> loadIosStatus() async {
+    try {
+      final data = await _api.get('/api/mobile/ios');
+      final list = data['apps'] as List? ?? [];
+      _iosApps = list.map((a) => IosAppStatus.fromJson(a as Map<String, dynamic>)).toList();
+    } catch (e) {
+      _iosApps = [];
+    }
+    notifyListeners();
+  }
+
+  Future<Map<String, dynamic>> triggerIosDeploy(String appName, {String ref = 'main'}) async {
+    return _api.post('/api/mobile/ios/$appName/deploy', body: {'ref': ref});
   }
 }

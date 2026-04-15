@@ -233,7 +233,7 @@ class _FlutterAppCard extends StatelessWidget {
           Icons.phone_iphone,
           color: app.hasBackend ? RummelBlueColors.primary500 : Colors.grey,
         ),
-        title: Text(app.name,
+        title: Text(app.title,
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
         subtitle: Text(app.description, maxLines: 1, overflow: TextOverflow.ellipsis),
         children: [
@@ -242,6 +242,7 @@ class _FlutterAppCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                _DetailRow('Package', app.name),
                 _DetailRow('Repo', app.repo),
                 _DetailRow('Backend', app.backend ?? 'None (standalone)'),
                 const SizedBox(height: 8),

@@ -36,6 +36,7 @@ class CatalogSummary {
 
 class FlutterApp {
   final String name;
+  final String? displayName;
   final String repo;
   final String description;
   final List<String> platforms;
@@ -45,6 +46,7 @@ class FlutterApp {
 
   FlutterApp({
     required this.name,
+    this.displayName,
     required this.repo,
     required this.description,
     required this.platforms,
@@ -55,6 +57,7 @@ class FlutterApp {
 
   factory FlutterApp.fromJson(Map<String, dynamic> json) => FlutterApp(
         name: json['name'] ?? '',
+        displayName: json['display_name'] as String?,
         repo: json['repo'] ?? '',
         description: json['description'] ?? '',
         platforms: (json['platforms'] as List?)?.cast<String>() ?? [],
@@ -62,6 +65,12 @@ class FlutterApp {
         dependsOn: (json['depends_on'] as List?)?.cast<String>() ?? [],
         hasTests: json['has_tests'] ?? false,
       );
+
+  /// Human-readable title: uses display_name if set, otherwise formats the package name.
+  String get title {
+    if (displayName != null && displayName!.isNotEmpty) return displayName!;
+    return name.replaceAll('_', ' ').split(' ').map((w) => w.isEmpty ? '' : '${w[0].toUpperCase()}${w.substring(1)}').join(' ');
+  }
 
   bool get hasBackend => backend != null && backend!.isNotEmpty;
 

@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .routers import secrets, deployments, services, catalog, costs, infrastructure
+from .routers import secrets, deployments, services, catalog, costs, infrastructure, mobile
 
 app = FastAPI(
     title="Artemis Infrastructure API",
@@ -28,6 +28,7 @@ app.include_router(services.router)
 app.include_router(catalog.router)
 app.include_router(costs.router)
 app.include_router(infrastructure.router)
+app.include_router(mobile.router)
 
 
 @app.get("/health")
