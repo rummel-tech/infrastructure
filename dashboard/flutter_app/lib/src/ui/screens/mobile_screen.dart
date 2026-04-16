@@ -245,21 +245,18 @@ class _AppCard extends StatelessWidget {
             _CiFileRow(
               icon: Icons.code,
               label: 'fastlane/Fastfile',
-              repo: app.name,
               exists: app.hasFastfile,
             ),
             const SizedBox(height: 4),
             _CiFileRow(
               icon: Icons.settings,
               label: 'fastlane/Appfile',
-              repo: app.name,
               exists: app.hasFastfile,
             ),
             const SizedBox(height: 4),
             _CiFileRow(
               icon: Icons.play_circle_outline,
-              label: '.github/workflows/deploy-${app.name.replaceAll("_", "-")}-ios.yml',
-              repo: 'infrastructure',
+              label: '.github/workflows/deploy-...-ios.yml  [infrastructure]',
               exists: app.hasWorkflow,
             ),
             const SizedBox(height: 12),
@@ -577,13 +574,11 @@ class _ReadinessBadge extends StatelessWidget {
 class _CiFileRow extends StatelessWidget {
   final IconData icon;
   final String label;
-  final String repo;
   final bool exists;
 
   const _CiFileRow({
     required this.icon,
     required this.label,
-    required this.repo,
     required this.exists,
   });
 

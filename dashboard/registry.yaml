@@ -35,7 +35,7 @@ backend_services:
   framework: fastapi
   port: 8010
   has_tests: true
-  frontend: meals_app
+  frontend: meal_planner
 - name: home-manager
   repo: services
   description: Home management and maintenance tracking backend
@@ -43,7 +43,7 @@ backend_services:
   framework: fastapi
   port: 8020
   has_tests: true
-  frontend: home_app
+  frontend: home_manager
 - name: vehicle-manager
   repo: services
   description: Vehicle management and maintenance backend
@@ -51,7 +51,7 @@ backend_services:
   framework: fastapi
   port: 8030
   has_tests: true
-  frontend: vehicle_app
+  frontend: vehicle_manager
 - name: work-planner
   repo: services
   description: Corporate and entrepreneurial work planning backend
@@ -59,7 +59,7 @@ backend_services:
   framework: fastapi
   port: 8040
   has_tests: false
-  frontend: artemis_work_planner
+  frontend: work_planner
 - name: education-planner
   repo: services
   description: Education goals and weekly activity planning backend
@@ -126,7 +126,7 @@ flutter_apps:
   depends_on:
   - rummel_blue_theme
   has_tests: true
-- name: artemis_work_planner
+- name: work_planner
   display_name: Work Planner
   repo: work-planner
   description: Work planning for corporate and entrepreneurial endeavors
@@ -178,7 +178,7 @@ flutter_apps:
   depends_on:
   - rummel_blue_theme
   has_tests: true
-- name: meals_app
+- name: meal_planner
   display_name: Meal Planner
   repo: meal-planner
   description: Meal planning application
@@ -193,7 +193,7 @@ flutter_apps:
   - shared_services
   - meals_ui
   has_tests: true
-- name: home_app
+- name: home_manager
   display_name: Home Manager
   repo: home-manager
   description: Home management application
@@ -208,7 +208,7 @@ flutter_apps:
   - shared_services
   - home_ui
   has_tests: true
-- name: vehicle_app
+- name: vehicle_manager
   display_name: Vehicle Manager
   repo: vehicle-manager
   description: Vehicle management application
@@ -260,12 +260,12 @@ shared_packages:
   - infrastructure_dashboard
   - focus_training
   - investment_manager
-  - meals_app
-  - home_app
-  - vehicle_app
+  - meal_planner
+  - home_manager
+  - vehicle_manager
   - workout_planner
   - artemis_mobile
-  - artemis_work_planner
+  - work_planner
 - name: shared_services
   repo: shared_services
   description: API client, auth, token storage, validation, logging
@@ -273,30 +273,30 @@ shared_packages:
   version: 0.1.0
   consumers:
   - artemis_mobile
-  - meals_app
-  - home_app
-  - vehicle_app
+  - meal_planner
+  - home_manager
+  - vehicle_manager
 - name: meals_ui
   repo: meal-planner
   description: Meal planner UI components and screens
   language: dart
   version: 0.0.1
   consumers:
-  - meals_app
+  - meal_planner
 - name: home_ui
   repo: home-manager
   description: Home manager UI components and screens
   language: dart
   version: 0.0.1
   consumers:
-  - home_app
+  - home_manager
 - name: vehicle_ui
   repo: vehicle-manager
   description: Vehicle manager UI components and screens
   language: dart
   version: 0.0.1
   consumers:
-  - vehicle_app
+  - vehicle_manager
 infrastructure:
   terraform:
     repo: infrastructure

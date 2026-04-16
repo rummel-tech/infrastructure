@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,7 +36,7 @@ def _ios_apps_from_catalog() -> list[dict]:
     for app in apps:
         repo = app.get("repo", "")
         display_name = app.get("display_name", "")
-        flutter_root = app.get("ios_flutter_root", ".")
+        flutter_root = app.get("ios_flutter_root") or "."
         profile_secret = f"{repo.upper().replace('-', '_')}_PROVISIONING_PROFILE_NAME"
         result.append({
             "name": app["name"],
@@ -121,9 +122,15 @@ async def ios_status(
                 "Bundle ID is a com.example placeholder — update ios_bundle_id in registry.yaml and project.pbxproj"
             )
         if not has_workflow:
-            readiness_issues.append("No GitHub Actions workflow in infrastructure repo — use Setup CI")
+            readiness_issues.append(
+            "No GitHub Actions workflow in infrastructure repo"
+            + (" — use Setup CI" if bundle_id_valid else " — fix bundle ID first, then use Setup CI")
+        )
         if not has_fastfile:
-            readiness_issues.append("No fastlane/Fastfile in app repo — use Setup CI")
+            readiness_issues.append(
+                "No fastlane/Fastfile in app repo"
+                + (" — use Setup CI" if bundle_id_valid else " — fix bundle ID first, then use Setup CI")
+            )
         if not build_number_set:
             readiness_issues.append(
                 "pubspec.yaml version missing build number (needs +N, e.g. 1.0.0+1)"
@@ -298,7 +305,7 @@ def _render_workflow(
         "      - name: Checkout infrastructure repo",
         "        uses: actions/checkout@v4",
         "",
-        f"      - name: Checkout {app_name} repo",
+        f"      - name: Checkout {repo} repo",
         "        uses: actions/checkout@v4",
         "        with:",
         f"          repository: rummel-tech/{repo}",
@@ -352,16 +359,16 @@ def _render_workflow(
         "        if: ${{ github.event.inputs.deploy_target != 'testflight' }}",
         "        uses: actions/upload-artifact@v4",
         "        with:",
-        f"          name: {app_name}-ios-build-${{{{ env.APP_REF }}}}",
+        f"          name: {repo}-ios-build-${{{{ env.APP_REF }}}}",
         f"          path: {app_dir}/build/ios/iphoneos/Runner.app",
         "          retention-days: 30",
         "",
         "      - name: Build summary",
         "        run: |",
         "          if [[ \"${{ github.event.inputs.deploy_target }}\" == \"testflight\" ]]; then",
-        f"            echo \"Deployed {app_name}@${{{{ env.APP_REF }}}} to TestFlight\"",
+        f"            echo \"Deployed {repo}@${{{{ env.APP_REF }}}} to TestFlight\"",
         "          else",
-        f"            echo \"{app_name}@${{{{ env.APP_REF }}}} build artifact uploaded\"",
+        f"            echo \"{repo}@${{{{ env.APP_REF }}}} build artifact uploaded\"",
         "          fi",
     ]
     return "\n".join(lines) + "\n"
@@ -410,11 +417,11 @@ async def setup_ios_ci(
     workflow_path = f".github/workflows/deploy-{repo}-ios.yml"
 
     # Fetch existing SHAs (needed by GitHub API when updating)
-    existing_fastfile, existing_appfile, existing_workflow = await _gather(*[
+    existing_fastfile, existing_appfile, existing_workflow = await asyncio.gather(
         gh.get_file(repo, fastfile_path),
         gh.get_file(repo, appfile_path),
         gh.get_file("infrastructure", workflow_path),
-    ])
+    )
 
     fastfile_result = await gh.create_or_update_file(
         repo=repo,
@@ -450,9 +457,3 @@ async def setup_ios_ci(
         "appfile": appfile_result,
         "workflow": workflow_result,
     }
-
-
-async def _gather(*coros):
-    """Thin wrapper — asyncio.gather without importing at module level."""
-    import asyncio
-    return await asyncio.gather(*coros)
