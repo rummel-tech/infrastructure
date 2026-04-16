@@ -86,6 +86,7 @@ flutter_apps:
   - ios
   - android
   backend: artemis
+  ios_bundle_id: com.rummeltech.artemis
   depends_on:
   - shared_services
   - rummel_blue_theme
@@ -121,6 +122,7 @@ flutter_apps:
   - android
   - linux
   backend: workout-planner
+  ios_bundle_id: com.rummeltech.workoutPlanner
   depends_on:
   - rummel_blue_theme
   has_tests: true
@@ -136,6 +138,7 @@ flutter_apps:
   - macos
   - windows
   backend: work-planner
+  ios_bundle_id: com.rummeltech.workPlanner
   depends_on:
   - rummel_blue_theme
   has_tests: true
@@ -148,6 +151,7 @@ flutter_apps:
   - ios
   - linux
   backend: content-planner
+  ios_bundle_id: com.rummeltech.contentPlanner
   depends_on: []
   has_tests: true
 - name: education_planner
@@ -159,6 +163,7 @@ flutter_apps:
   - ios
   - linux
   backend: education-planner
+  ios_bundle_id: com.rummeltech.educationPlanner
   depends_on: []
   has_tests: true
 - name: focus_training
@@ -169,6 +174,7 @@ flutter_apps:
   - web
   - ios
   backend: null
+  ios_bundle_id: com.rummeltech.focusTraining
   depends_on:
   - rummel_blue_theme
   has_tests: true
@@ -180,6 +186,8 @@ flutter_apps:
   - web
   - ios
   backend: meal-planner
+  ios_bundle_id: com.rummeltech.mealPlanner
+  ios_flutter_root: frontend/app/meals_app
   depends_on:
   - rummel_blue_theme
   - shared_services
@@ -193,6 +201,8 @@ flutter_apps:
   - web
   - ios
   backend: home-manager
+  ios_bundle_id: com.rummeltech.homeManager
+  ios_flutter_root: frontend/app/home_app
   depends_on:
   - rummel_blue_theme
   - shared_services
@@ -206,6 +216,8 @@ flutter_apps:
   - web
   - ios
   backend: vehicle-manager
+  ios_bundle_id: com.rummeltech.vehicleManager
+  ios_flutter_root: frontend/app/vehicle_app
   depends_on:
   - rummel_blue_theme
   - shared_services
@@ -219,6 +231,7 @@ flutter_apps:
   - web
   - ios
   backend: null
+  ios_bundle_id: com.rummeltech.investmentManager
   depends_on:
   - rummel_blue_theme
   has_tests: true

@@ -35,7 +35,7 @@ class MobileScreen extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Header summary row
+// Header summary
 // ---------------------------------------------------------------------------
 
 class _IosHeader extends StatelessWidget {
@@ -44,7 +44,7 @@ class _IosHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final readyCount = apps.where((a) => a.secretsReady).length;
+    final readyCount = apps.where((a) => a.testflightReady).length;
     final allReady = readyCount == apps.length;
 
     return Container(
@@ -56,7 +56,6 @@ class _IosHeader extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: allReady ? RummelBlueColors.success500 : RummelBlueColors.warning500,
-          width: 1,
         ),
       ),
       child: Row(
@@ -70,11 +69,13 @@ class _IosHeader extends StatelessWidget {
           Expanded(
             child: Text(
               allReady
-                  ? 'All ${ apps.length} apps ready for TestFlight'
-                  : '$readyCount / ${apps.length} apps have signing secrets configured',
+                  ? 'All ${apps.length} apps ready for TestFlight'
+                  : '$readyCount / ${apps.length} apps fully ready for TestFlight',
               style: TextStyle(
                 fontWeight: FontWeight.w600,
-                color: allReady ? RummelBlueColors.success500 : RummelBlueColors.warning500,
+                color: allReady
+                    ? RummelBlueColors.success500
+                    : RummelBlueColors.warning500,
               ),
             ),
           ),
@@ -114,36 +115,66 @@ class _AppCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(app.displayName,
-                          style: theme.textTheme.titleMedium
-                              ?.copyWith(fontWeight: FontWeight.bold)),
-                      Text(app.bundleId,
-                          style: TextStyle(
-                              fontSize: 11,
-                              fontFamily: 'monospace',
-                              color: Colors.grey[500])),
+                      Text(
+                        app.displayName,
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        app.bundleId,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontFamily: 'monospace',
+                          color: app.bundleIdValid
+                              ? Colors.grey[500]
+                              : RummelBlueColors.error500,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                _SecretsBadge(app: app),
+                _ReadinessBadge(app: app),
               ],
             ),
 
+            // ---- Readiness checklist ----
             const SizedBox(height: 12),
+            _ReadinessChecklist(app: app),
 
-            // ---- Latest run status ----
+            // ---- Latest run ----
             if (latestRun != null) ...[
-              _LatestRunRow(run: latestRun),
               const SizedBox(height: 12),
+              _LatestRunRow(run: latestRun),
             ],
+
+            const SizedBox(height: 12),
 
             // ---- Action buttons ----
             Row(
               children: [
+                if (!app.ciConfigured) ...[
+                  Expanded(
+                    child: FilledButton.icon(
+                      icon: const Icon(Icons.build, size: 16),
+                      label: const Text('Setup CI'),
+                      onPressed: app.bundleIdValid
+                          ? () => _showSetupCiDialog(context, app)
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 Expanded(
                   child: FilledButton.icon(
                     icon: const Icon(Icons.flight_takeoff, size: 16),
                     label: const Text('Deploy to TestFlight'),
+                    style: app.ciConfigured
+                        ? null
+                        : FilledButton.styleFrom(
+                            backgroundColor:
+                                Theme.of(context).colorScheme.surfaceContainerHighest,
+                            foregroundColor: Colors.grey[500],
+                          ),
                     onPressed: app.workflowId == null
                         ? null
                         : () => _showDeployDialog(context, app),
@@ -172,18 +203,106 @@ class _AppCard extends StatelessWidget {
               const SizedBox(height: 12),
               const Divider(height: 1),
               const SizedBox(height: 8),
-              Text('Signing Secrets',
-                  style: theme.textTheme.labelSmall
-                      ?.copyWith(color: Colors.grey[500], letterSpacing: 0.8)),
+              Text(
+                'Signing Secrets',
+                style: theme.textTheme.labelSmall
+                    ?.copyWith(color: Colors.grey[500], letterSpacing: 0.8),
+              ),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 6,
                 runSpacing: 4,
-                children: app.secrets.map((s) => _SecretChip(secret: s)).toList(),
+                children:
+                    app.secrets.map((s) => _SecretChip(secret: s)).toList(),
               ),
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  void _showSetupCiDialog(BuildContext context, IosAppStatus app) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.build, size: 20),
+            const SizedBox(width: 8),
+            Text('Setup CI — ${app.displayName}'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This will commit the following files to GitHub:',
+              style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+            ),
+            const SizedBox(height: 12),
+            _CiFileRow(
+              icon: Icons.code,
+              label: 'fastlane/Fastfile',
+              repo: app.name,
+              exists: app.hasFastfile,
+            ),
+            const SizedBox(height: 4),
+            _CiFileRow(
+              icon: Icons.settings,
+              label: 'fastlane/Appfile',
+              repo: app.name,
+              exists: app.hasFastfile,
+            ),
+            const SizedBox(height: 4),
+            _CiFileRow(
+              icon: Icons.play_circle_outline,
+              label: '.github/workflows/deploy-${app.name.replaceAll("_", "-")}-ios.yml',
+              repo: 'infrastructure',
+              exists: app.hasWorkflow,
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: RummelBlueColors.primary500.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                'Bundle ID: ${app.bundleId}',
+                style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.build, size: 16),
+            label: const Text('Generate & Commit'),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final provider = context.read<DashboardProvider>();
+              final result = await provider.setupIosCi(app.name);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(
+                    result['success'] == true
+                        ? 'CI files committed for ${app.displayName}'
+                        : 'Failed: ${result['error'] ?? result['fastfile']?['error'] ?? 'Unknown error'}',
+                  ),
+                  backgroundColor: result['success'] == true
+                      ? RummelBlueColors.success500
+                      : RummelBlueColors.error500,
+                ));
+              }
+            },
+          ),
+        ],
       ),
     );
   }
@@ -204,14 +323,18 @@ class _AppCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Bundle ID: ${app.bundleId}',
-                style: TextStyle(
-                    fontSize: 12,
-                    fontFamily: 'monospace',
-                    color: Colors.grey[500])),
+            Text(
+              'Bundle ID: ${app.bundleId}',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  color: Colors.grey[500]),
+            ),
             const SizedBox(height: 4),
-            Text('Workflow: ${app.workflowName}',
-                style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+            Text(
+              'Workflow: ${app.workflowName}',
+              style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+            ),
             const SizedBox(height: 16),
             TextField(
               controller: refCtrl,
@@ -220,7 +343,7 @@ class _AppCard extends StatelessWidget {
                 hintText: 'main',
               ),
             ),
-            if (!app.secretsReady) ...[
+            if (!app.testflightReady && app.readinessIssues.isNotEmpty) ...[
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(10),
@@ -228,18 +351,30 @@ class _AppCard extends StatelessWidget {
                   color: RummelBlueColors.warning500.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.warning_amber_rounded,
-                        size: 16, color: RummelBlueColors.warning500),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${app.missingSecrets.length} signing secret(s) missing — build may fail',
-                        style: TextStyle(
-                            fontSize: 12, color: RummelBlueColors.warning500),
-                      ),
+                    Row(
+                      children: [
+                        Icon(Icons.warning_amber_rounded,
+                            size: 14, color: RummelBlueColors.warning500),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${app.readinessIssues.length} issue(s) may cause failure',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: RummelBlueColors.warning500),
+                        ),
+                      ],
                     ),
+                    for (final issue in app.readinessIssues)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, left: 20),
+                        child: Text('• $issue',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey[600])),
+                      ),
                   ],
                 ),
               ),
@@ -335,6 +470,151 @@ class _AppCard extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Readiness checklist
+// ---------------------------------------------------------------------------
+
+class _ReadinessChecklist extends StatelessWidget {
+  final IosAppStatus app;
+  const _ReadinessChecklist({required this.app});
+
+  @override
+  Widget build(BuildContext context) {
+    final checks = [
+      _Check('Bundle ID', app.bundleIdValid),
+      _Check('Workflow', app.hasWorkflow),
+      _Check('Fastfile', app.hasFastfile),
+      _Check('Build #', app.buildNumberSet),
+      _Check('Secrets', app.secretsReady),
+    ];
+
+    return Row(
+      children: checks.map((c) => Expanded(child: _CheckPill(check: c))).toList(),
+    );
+  }
+}
+
+class _Check {
+  final String label;
+  final bool passed;
+  const _Check(this.label, this.passed);
+}
+
+class _CheckPill extends StatelessWidget {
+  final _Check check;
+  const _CheckPill({required this.check});
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        check.passed ? RummelBlueColors.success500 : RummelBlueColors.error500;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 2),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            check.passed ? Icons.check_circle : Icons.cancel,
+            size: 14,
+            color: color,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            check.label,
+            style: TextStyle(fontSize: 9, color: color, fontWeight: FontWeight.w600),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Readiness badge (header pill)
+// ---------------------------------------------------------------------------
+
+class _ReadinessBadge extends StatelessWidget {
+  final IosAppStatus app;
+  const _ReadinessBadge({required this.app});
+
+  @override
+  Widget build(BuildContext context) {
+    if (app.testflightReady) {
+      return Chip(
+        label: const Text('Ready',
+            style: TextStyle(fontSize: 10, color: RummelBlueColors.success500)),
+        avatar: const Icon(Icons.check_circle,
+            size: 14, color: RummelBlueColors.success500),
+        side: const BorderSide(color: RummelBlueColors.success500),
+        backgroundColor: RummelBlueColors.success500.withOpacity(0.08),
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+      );
+    }
+    final count = app.readinessIssues.length;
+    return Chip(
+      label: Text('$count issue${count == 1 ? '' : 's'}',
+          style: const TextStyle(fontSize: 10, color: RummelBlueColors.warning500)),
+      avatar: const Icon(Icons.warning_amber_rounded,
+          size: 14, color: RummelBlueColors.warning500),
+      side: const BorderSide(color: RummelBlueColors.warning500),
+      backgroundColor: RummelBlueColors.warning500.withOpacity(0.08),
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CI file row (in setup dialog)
+// ---------------------------------------------------------------------------
+
+class _CiFileRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String repo;
+  final bool exists;
+
+  const _CiFileRow({
+    required this.icon,
+    required this.label,
+    required this.repo,
+    required this.exists,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: Colors.grey[500]),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          exists ? 'update' : 'create',
+          style: TextStyle(
+            fontSize: 10,
+            color: exists ? RummelBlueColors.warning500 : RummelBlueColors.success500,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Latest run row
 // ---------------------------------------------------------------------------
 
@@ -378,8 +658,8 @@ class _LatestRunRow extends StatelessWidget {
                           size: 11, color: Colors.grey[500]),
                       const SizedBox(width: 3),
                       Text(run.duration,
-                          style: TextStyle(
-                              fontSize: 11, color: Colors.grey[500])),
+                          style:
+                              TextStyle(fontSize: 11, color: Colors.grey[500])),
                     ],
                   ],
                 ),
@@ -394,7 +674,7 @@ class _LatestRunRow extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Run tile for history sheet
+// Run tile (history sheet)
 // ---------------------------------------------------------------------------
 
 class _RunTile extends StatelessWidget {
@@ -434,52 +714,7 @@ class _RunTile extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Secrets badge (compact pill on card header)
-// ---------------------------------------------------------------------------
-
-class _SecretsBadge extends StatelessWidget {
-  final IosAppStatus app;
-  const _SecretsBadge({required this.app});
-
-  @override
-  Widget build(BuildContext context) {
-    // If secrets API was unavailable, all present == null
-    if (app.secrets.every((s) => s.present == null)) {
-      return Chip(
-        label: const Text('Secrets unknown',
-            style: TextStyle(fontSize: 10)),
-        avatar: const Icon(Icons.help_outline, size: 14),
-        visualDensity: VisualDensity.compact,
-        padding: EdgeInsets.zero,
-      );
-    }
-    if (app.secretsReady) {
-      return Chip(
-        label: const Text('Signing ready',
-            style: TextStyle(fontSize: 10, color: RummelBlueColors.success500)),
-        avatar: const Icon(Icons.check_circle, size: 14,
-            color: RummelBlueColors.success500),
-        side: const BorderSide(color: RummelBlueColors.success500),
-        backgroundColor: RummelBlueColors.success500.withOpacity(0.08),
-        visualDensity: VisualDensity.compact,
-        padding: EdgeInsets.zero,
-      );
-    }
-    return Chip(
-      label: Text('${app.missingSecrets.length} missing',
-          style: const TextStyle(fontSize: 10, color: RummelBlueColors.error500)),
-      avatar: const Icon(Icons.error_outline, size: 14,
-          color: RummelBlueColors.error500),
-      side: const BorderSide(color: RummelBlueColors.error500),
-      backgroundColor: RummelBlueColors.error500.withOpacity(0.08),
-      visualDensity: VisualDensity.compact,
-      padding: EdgeInsets.zero,
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Missing secrets warning box
+// Missing secrets warning
 // ---------------------------------------------------------------------------
 
 class _MissingSecretsWarning extends StatelessWidget {
@@ -527,7 +762,7 @@ class _MissingSecretsWarning extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Individual secret chip
+// Secret chip
 // ---------------------------------------------------------------------------
 
 class _SecretChip extends StatelessWidget {
@@ -560,7 +795,7 @@ class _SecretChip extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Run icon helper
+// Run icon
 // ---------------------------------------------------------------------------
 
 class _RunIcon extends StatelessWidget {
@@ -571,7 +806,8 @@ class _RunIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (run.isSuccess) {
-      return Icon(Icons.check_circle, color: RummelBlueColors.success500, size: size);
+      return Icon(Icons.check_circle,
+          color: RummelBlueColors.success500, size: size);
     }
     if (run.isFailure) {
       return Icon(Icons.cancel, color: RummelBlueColors.error500, size: size);

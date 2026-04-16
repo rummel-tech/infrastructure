@@ -1,3 +1,4 @@
+import base64
 import httpx
 from datetime import datetime
 
@@ -151,6 +152,47 @@ class GitHubActionsService:
             resp = await client.post(url, headers=self.headers, json=body)
             if resp.status_code == 204:
                 return {"success": True, "message": "Workflow dispatch triggered"}
+            return {"success": False, "error": resp.text}
+
+    async def get_file(self, repo: str, path: str) -> dict | None:
+        """Return {content: str, sha: str} for a file, or None if not found."""
+        url = f"{self.BASE_URL}/repos/{self.org}/{repo}/contents/{path}"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=self.headers)
+            if resp.status_code == 404:
+                return None
+            if resp.status_code in (401, 403):
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+            content = base64.b64decode(data["content"]).decode("utf-8")
+            return {"content": content, "sha": data["sha"]}
+
+    async def create_or_update_file(
+        self,
+        repo: str,
+        path: str,
+        content: str,
+        message: str,
+        sha: str | None = None,
+    ) -> dict:
+        """Create or update a file in a repo. sha required when updating an existing file."""
+        url = f"{self.BASE_URL}/repos/{self.org}/{repo}/contents/{path}"
+        body: dict = {
+            "message": message,
+            "content": base64.b64encode(content.encode()).decode(),
+        }
+        if sha:
+            body["sha"] = sha
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.put(url, headers=self.headers, json=body)
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                return {
+                    "success": True,
+                    "sha": data["content"]["sha"],
+                    "url": data["content"]["html_url"],
+                }
             return {"success": False, "error": resp.text}
 
     async def list_org_repos(self) -> list[dict]:

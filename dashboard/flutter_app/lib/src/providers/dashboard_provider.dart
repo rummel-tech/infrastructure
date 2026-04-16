@@ -466,4 +466,13 @@ class DashboardProvider extends ChangeNotifier {
   Future<Map<String, dynamic>> triggerIosDeploy(String appName, {String ref = 'main'}) async {
     return _api.post('/api/mobile/ios/$appName/deploy', body: {'ref': ref});
   }
+
+  Future<Map<String, dynamic>> setupIosCi(String appName) async {
+    final result = await _api.post('/api/mobile/ios/$appName/setup-ci');
+    if (result['success'] == true) {
+      await Future.delayed(const Duration(seconds: 2));
+      await loadIosStatus();
+    }
+    return result;
+  }
 }

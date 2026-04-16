@@ -18,6 +18,12 @@ class IosAppStatus {
   final String name;
   final String displayName;
   final String bundleId;
+  final bool bundleIdValid;
+  final bool hasWorkflow;
+  final bool hasFastfile;
+  final bool buildNumberSet;
+  final List<String> readinessIssues;
+  final bool testflightReady;
   final int? workflowId;
   final String workflowName;
   final List<WorkflowRun> recentRuns;
@@ -29,6 +35,12 @@ class IosAppStatus {
     required this.name,
     required this.displayName,
     required this.bundleId,
+    required this.bundleIdValid,
+    required this.hasWorkflow,
+    required this.hasFastfile,
+    required this.buildNumberSet,
+    required this.readinessIssues,
+    required this.testflightReady,
     this.workflowId,
     required this.workflowName,
     required this.recentRuns,
@@ -48,6 +60,12 @@ class IosAppStatus {
       name: json['name'] as String? ?? '',
       displayName: json['display_name'] as String? ?? '',
       bundleId: json['bundle_id'] as String? ?? '',
+      bundleIdValid: json['bundle_id_valid'] as bool? ?? true,
+      hasWorkflow: json['has_workflow'] as bool? ?? false,
+      hasFastfile: json['has_fastfile'] as bool? ?? false,
+      buildNumberSet: json['build_number_set'] as bool? ?? false,
+      readinessIssues: (json['readiness_issues'] as List? ?? []).cast<String>(),
+      testflightReady: json['testflight_ready'] as bool? ?? false,
       workflowId: json['workflow_id'] as int?,
       workflowName: json['workflow_name'] as String? ?? '',
       recentRuns: runs,
@@ -58,4 +76,6 @@ class IosAppStatus {
   }
 
   WorkflowRun? get latestRun => recentRuns.isEmpty ? null : recentRuns.first;
+
+  bool get ciConfigured => hasWorkflow && hasFastfile;
 }
