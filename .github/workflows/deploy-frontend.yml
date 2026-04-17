@@ -21,6 +21,11 @@ on:
         required: false
         type: string
         default: ''
+      flutter_root:
+        description: 'Path to Flutter app root within the repo (default: .)'
+        required: false
+        type: string
+        default: '.'
     secrets:
       PAT_TOKEN:
         required: true
@@ -131,20 +136,12 @@ jobs:
         run: flutter config --enable-web
 
       - name: Get dependencies
-        working-directory: app-repo
-        run: |
-          if [ -d "applications/frontend/apps/mobile_app" ]; then
-            cd applications/frontend/apps/mobile_app
-          fi
-          flutter pub get
+        working-directory: app-repo/${{ inputs.flutter_root }}
+        run: flutter pub get
 
       - name: Build Flutter web
-        working-directory: app-repo
+        working-directory: app-repo/${{ inputs.flutter_root }}
         run: |
-          if [ -d "applications/frontend/apps/mobile_app" ]; then
-            cd applications/frontend/apps/mobile_app
-          fi
-
           flutter build web --release \
             --base-href "/" \
             --dart-define=ENVIRONMENT=${{ inputs.environment }} \
@@ -152,13 +149,9 @@ jobs:
 
       - name: Deploy to S3
         run: |
-          # Find the build output directory
-          if [ -d "app-repo/applications/frontend/apps/mobile_app/build/web" ]; then
-            BUILD_DIR="app-repo/applications/frontend/apps/mobile_app/build/web"
-          elif [ -d "app-repo/build/web" ]; then
-            BUILD_DIR="app-repo/build/web"
-          else
-            echo "::error::Could not find Flutter web build output"
+          BUILD_DIR="app-repo/${{ inputs.flutter_root }}/build/web"
+          if [ ! -d "$BUILD_DIR" ]; then
+            echo "::error::Flutter web build output not found at $BUILD_DIR"
             exit 1
           fi
 

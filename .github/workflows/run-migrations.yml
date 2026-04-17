@@ -106,12 +106,19 @@ jobs:
       - name: Run migration as one-off ECS task
         id: run-task
         run: |
+          # Build overrides JSON safely — assign CMD via single quotes so the
+          # GitHub Actions substitution happens before the shell sees the value,
+          # preventing unescaped double-quotes from breaking the shell string.
+          CMD='${{ steps.cmd.outputs.CMD }}'
+          CONTAINER="${{ inputs.environment }}-${{ inputs.app_name }}"
+          OVERRIDES=$(printf '{"containerOverrides":[{"name":"%s","command":%s}]}' "$CONTAINER" "$CMD")
+
           TASK_ARN=$(aws ecs run-task \
             --cluster "$CLUSTER" \
             --task-definition "$TASK_DEF" \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
-            --overrides "{\"containerOverrides\":[{\"name\":\"${{ inputs.environment }}-${{ inputs.app_name }}\",\"command\":${{ steps.cmd.outputs.CMD }}}]}" \
+            --overrides "$OVERRIDES" \
             --region $AWS_REGION \
             --query 'tasks[0].taskArn' \
             --output text)

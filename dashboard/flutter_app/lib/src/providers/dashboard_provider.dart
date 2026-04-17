@@ -7,6 +7,7 @@ import '../models/catalog_item.dart';
 import '../models/infrastructure.dart';
 import '../models/cost_data.dart';
 import '../models/ios_status.dart';
+import '../models/website_content.dart';
 import '../services/api_client.dart';
 
 class DashboardProvider extends ChangeNotifier {
@@ -101,6 +102,16 @@ class DashboardProvider extends ChangeNotifier {
   // iOS / Mobile state
   List<IosAppStatus> _iosApps = [];
   List<IosAppStatus> get iosApps => _iosApps;
+
+  // Website state
+  WebsiteContent? _websiteContent;
+  WebsiteContent? get websiteContent => _websiteContent;
+
+  List<WebsiteDeployRun> _websiteRuns = [];
+  List<WebsiteDeployRun> get websiteRuns => _websiteRuns;
+
+  bool _websiteDeployWorkflowFound = false;
+  bool get websiteDeployWorkflowFound => _websiteDeployWorkflowFound;
 
   bool _loading = false;
   bool get loading => _loading;
@@ -472,6 +483,55 @@ class DashboardProvider extends ChangeNotifier {
     if (result['success'] == true) {
       await Future.delayed(const Duration(seconds: 2));
       await loadIosStatus();
+    }
+    return result;
+  }
+
+  // ------------------------------------------------------------------
+  // Website
+  // ------------------------------------------------------------------
+
+  Future<void> loadWebsiteContent() async {
+    try {
+      final data = await _api.get('/api/website/content');
+      _websiteContent = WebsiteContent.fromJson(data);
+    } catch (e) {
+      _websiteContent = null;
+    }
+    notifyListeners();
+  }
+
+  Future<void> loadWebsiteStatus() async {
+    try {
+      final data = await _api.get('/api/website/status');
+      _websiteDeployWorkflowFound = data['workflow_found'] as bool? ?? false;
+      final runs = data['recent_runs'] as List? ?? [];
+      _websiteRuns = runs
+          .map((r) => WebsiteDeployRun.fromJson(r as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      _websiteRuns = [];
+      _websiteDeployWorkflowFound = false;
+    }
+    notifyListeners();
+  }
+
+  Future<Map<String, dynamic>> saveWebsiteContent(WebsiteContent content) async {
+    final result = await _api.put('/api/website/content', body: {
+      'content': content.toJson(),
+    });
+    if (result['success'] == true) {
+      _websiteContent = content;
+      notifyListeners();
+    }
+    return result;
+  }
+
+  Future<Map<String, dynamic>> deployWebsite() async {
+    final result = await _api.post('/api/website/deploy');
+    if (result['success'] == true) {
+      await Future.delayed(const Duration(seconds: 3));
+      await loadWebsiteStatus();
     }
     return result;
   }

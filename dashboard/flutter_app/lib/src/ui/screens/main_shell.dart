@@ -10,6 +10,7 @@ import 'services_screen.dart';
 import 'infra_screen.dart';
 import 'cost_screen.dart';
 import 'mobile_screen.dart';
+import 'website_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -30,6 +31,7 @@ class _MainShellState extends State<MainShell> {
     InfraScreen(),
     CostScreen(),
     MobileScreen(),
+    WebsiteScreen(),
   ];
 
   static const _destinations = [
@@ -41,6 +43,7 @@ class _MainShellState extends State<MainShell> {
     _NavItem(icon: Icons.cloud_outlined, selected: Icons.cloud, label: 'Infra'),
     _NavItem(icon: Icons.attach_money, selected: Icons.attach_money, label: 'Costs'),
     _NavItem(icon: Icons.phone_iphone_outlined, selected: Icons.phone_iphone, label: 'Mobile'),
+    _NavItem(icon: Icons.language_outlined, selected: Icons.language, label: 'Website'),
   ];
 
   @override

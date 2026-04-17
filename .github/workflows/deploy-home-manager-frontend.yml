@@ -30,6 +30,7 @@ jobs:
       environment: staging
       repo_ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || 'main' }}
       api_url: ${{ github.event.inputs.api_url || '' }}
+      flutter_root: frontend/app/home_app
     secrets:
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
       AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
@@ -42,6 +43,7 @@ jobs:
       environment: production
       repo_ref: ${{ github.event.inputs.repo_ref || 'main' }}
       api_url: ${{ github.event.inputs.api_url || '' }}
+      flutter_root: frontend/app/home_app
     secrets:
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
       AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
