@@ -76,6 +76,14 @@ backend_services:
   port: 8060
   has_tests: false
   frontend: content_planner
+- name: trip-planner
+  repo: services
+  description: Trip planning — itineraries, packing lists, and budget tracking
+  language: python
+  framework: fastapi
+  port: 8070
+  has_tests: true
+  frontend: trip_planner
 flutter_apps:
 - name: artemis_mobile
   display_name: Artemis
@@ -234,6 +242,20 @@ flutter_apps:
   ios_bundle_id: com.rummeltech.finance.manager
   depends_on:
   - rummel_blue_theme
+  has_tests: true
+- name: trip_planner
+  display_name: Trip Planner
+  repo: trip-planner
+  description: Plan trips with itineraries, packing lists, and budget tracking
+  platforms:
+  - web
+  - ios
+  - android
+  backend: trip-planner
+  ios_bundle_id: com.rummeltech.travel.planner
+  depends_on:
+  - rummel_blue_theme
+  - shared_services
   has_tests: true
 shared_packages:
 - name: services-common
