@@ -122,7 +122,7 @@ flutter_apps:
   - android
   - linux
   backend: workout-planner
-  ios_bundle_id: com.rummeltech.workoutPlanner
+  ios_bundle_id: com.rummeltech.fitness.planner
   depends_on:
   - rummel_blue_theme
   has_tests: true
@@ -138,7 +138,7 @@ flutter_apps:
   - macos
   - windows
   backend: work-planner
-  ios_bundle_id: com.rummeltech.workPlanner
+  ios_bundle_id: com.rummeltech.work.planner
   depends_on:
   - rummel_blue_theme
   has_tests: true
@@ -151,7 +151,7 @@ flutter_apps:
   - ios
   - linux
   backend: content-planner
-  ios_bundle_id: com.rummeltech.contentPlanner
+  ios_bundle_id: com.rummeltech.content.planner
   depends_on: []
   has_tests: true
 - name: education_planner
@@ -163,7 +163,7 @@ flutter_apps:
   - ios
   - linux
   backend: education-planner
-  ios_bundle_id: com.rummeltech.educationPlanner
+  ios_bundle_id: com.rummeltech.education.planner
   depends_on: []
   has_tests: true
 - name: focus_training
@@ -174,7 +174,7 @@ flutter_apps:
   - web
   - ios
   backend: null
-  ios_bundle_id: com.rummeltech.focusTraining
+  ios_bundle_id: com.rummeltech.work.focus
   depends_on:
   - rummel_blue_theme
   has_tests: true
@@ -186,7 +186,7 @@ flutter_apps:
   - web
   - ios
   backend: meal-planner
-  ios_bundle_id: com.rummeltech.mealPlanner
+  ios_bundle_id: com.rummeltech.home.meals
   ios_flutter_root: frontend/app/meals_app
   depends_on:
   - rummel_blue_theme
@@ -201,7 +201,7 @@ flutter_apps:
   - web
   - ios
   backend: home-manager
-  ios_bundle_id: com.rummeltech.homeManager
+  ios_bundle_id: com.rummeltech.home.manager
   ios_flutter_root: frontend/app/home_app
   depends_on:
   - rummel_blue_theme
@@ -216,7 +216,7 @@ flutter_apps:
   - web
   - ios
   backend: vehicle-manager
-  ios_bundle_id: com.rummeltech.vehicleManager
+  ios_bundle_id: com.rummeltech.home.vehicle
   ios_flutter_root: frontend/app/vehicle_app
   depends_on:
   - rummel_blue_theme
@@ -231,7 +231,7 @@ flutter_apps:
   - web
   - ios
   backend: null
-  ios_bundle_id: com.rummeltech.investmentManager
+  ios_bundle_id: com.rummeltech.finance.manager
   depends_on:
   - rummel_blue_theme
   has_tests: true
