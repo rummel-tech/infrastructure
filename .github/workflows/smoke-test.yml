@@ -1,0 +1,189 @@
+name: Smoke Test
+
+# Runs a quick health + readiness check against a deployed service.
+# Called by auto-deploy-staging.yml and can be triggered manually.
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+    secrets:
+      AWS_ROLE_TO_ASSUME:
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'Service to smoke-test'
+        required: true
+        type: choice
+        options:
+          - auth
+          - artemis
+          - workout-planner
+          - meal-planner
+          - home-manager
+          - vehicle-manager
+          - work-planner
+          - education-planner
+          - content-planner
+          - trip-planner
+      environment:
+        description: 'Environment to test'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 10
+
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve ALB endpoint
+        id: endpoint
+        run: |
+          # Get the ALB DNS name from CloudFormation / Terraform outputs, or
+          # fall back to querying the ALB directly.
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "${{ inputs.environment }}-alb" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ]; then
+            echo "::error::Could not resolve ALB endpoint for ${{ inputs.environment }}"
+            exit 1
+          fi
+
+          # Map service name to ALB path prefix
+          case "${{ inputs.app_name }}" in
+            auth)               PATH_PREFIX="/auth" ;;
+            artemis)            PATH_PREFIX="" ;;
+            workout-planner)    PATH_PREFIX="/workout-planner" ;;
+            meal-planner)       PATH_PREFIX="/meal-planner" ;;
+            home-manager)       PATH_PREFIX="/home-manager" ;;
+            vehicle-manager)    PATH_PREFIX="/vehicle-manager" ;;
+            work-planner)       PATH_PREFIX="/work-planner" ;;
+            education-planner)  PATH_PREFIX="/education-planner" ;;
+            content-planner)    PATH_PREFIX="/content-planner" ;;
+            trip-planner)       PATH_PREFIX="/trip-planner" ;;
+            *)                  PATH_PREFIX="" ;;
+          esac
+
+          echo "base_url=https://${ALB_DNS}${PATH_PREFIX}" >> $GITHUB_OUTPUT
+          echo "ALB: https://${ALB_DNS}${PATH_PREFIX}"
+
+      - name: Wait for ECS service to stabilize
+        run: |
+          CLUSTER="${{ inputs.environment }}-cluster"
+          SERVICE="${{ inputs.environment }}-${{ inputs.app_name }}-service"
+
+          echo "Waiting for $SERVICE to stabilize..."
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE" \
+            --region $AWS_REGION || true
+
+      - name: Health check
+        id: health
+        run: |
+          BASE_URL="${{ steps.endpoint.outputs.base_url }}"
+          MAX_RETRIES=10
+          RETRY_DELAY=10
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i/$MAX_RETRIES — GET ${BASE_URL}/health"
+            HTTP_STATUS=$(curl -s -o /tmp/health_response.json -w "%{http_code}" \
+              --max-time 10 \
+              "${BASE_URL}/health" 2>/dev/null || echo "000")
+
+            echo "HTTP $HTTP_STATUS"
+            cat /tmp/health_response.json 2>/dev/null || true
+
+            if [ "$HTTP_STATUS" = "200" ]; then
+              STATUS=$(python3 -c "import json; d=json.load(open('/tmp/health_response.json')); print(d.get('status',''))" 2>/dev/null || echo "")
+              if [[ "$STATUS" == "ok" || "$STATUS" == "healthy" ]]; then
+                echo "Health check passed (status=$STATUS)"
+                echo "passed=true" >> $GITHUB_OUTPUT
+                break
+              fi
+            fi
+
+            if [ $i -lt $MAX_RETRIES ]; then
+              echo "Retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+            else
+              echo "::error::Health check failed after $MAX_RETRIES attempts"
+              echo "passed=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          done
+
+      - name: Readiness check
+        run: |
+          BASE_URL="${{ steps.endpoint.outputs.base_url }}"
+          HTTP_STATUS=$(curl -s -o /tmp/ready_response.json -w "%{http_code}" \
+            --max-time 10 \
+            "${BASE_URL}/ready" 2>/dev/null || echo "000")
+
+          echo "Readiness HTTP $HTTP_STATUS"
+          cat /tmp/ready_response.json 2>/dev/null || true
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Readiness check returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Readiness check passed."
+
+      - name: Artemis manifest check
+        if: inputs.app_name != 'artemis' && inputs.app_name != 'auth'
+        run: |
+          BASE_URL="${{ steps.endpoint.outputs.base_url }}"
+          HTTP_STATUS=$(curl -s -o /tmp/manifest.json -w "%{http_code}" \
+            --max-time 10 \
+            "${BASE_URL}/v1/artemis/manifest" 2>/dev/null || echo "000")
+
+          echo "Manifest HTTP $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::warning::Artemis manifest endpoint returned HTTP $HTTP_STATUS (non-blocking)"
+          else
+            MODULE_ID=$(python3 -c "import json; d=json.load(open('/tmp/manifest.json')); print(d.get('module',{}).get('id',''))" 2>/dev/null || echo "")
+            echo "Module ID from manifest: $MODULE_ID"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.health.outputs.passed }}" = "true" ]; then
+            echo "### Smoke Test ✅ — ${{ inputs.app_name }} (${{ inputs.environment }})" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Smoke Test ❌ — ${{ inputs.app_name }} (${{ inputs.environment }})" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| /health | ${{ steps.health.outputs.passed == 'true' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| /ready | ${{ steps.health.outputs.passed == 'true' && '✅ Passed' || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY

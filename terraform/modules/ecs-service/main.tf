@@ -95,6 +95,22 @@ resource "aws_ecs_service" "service" {
     }
   }
 
+  # Circuit breaker: automatically roll back if the new deployment fails health checks.
+  # ECS will stop the rollout and restore the previous task revision rather than leaving
+  # the service in a degraded state.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  deployment_controller {
+    type = "ECS"
+  }
+
+  # Tune deployment speeds: always keep at least 100% healthy while rolling out.
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
+
   lifecycle {
     ignore_changes = [desired_count, task_definition]
   }

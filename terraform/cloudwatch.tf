@@ -335,3 +335,264 @@ resource "aws_cloudwatch_dashboard" "main" {
     )
   })
 }
+
+# =============================================================================
+# Log-based Metric Filters — application-level error alerting
+# =============================================================================
+# Services emit structured JSON logs. These filters turn ERROR-level log lines
+# into CloudWatch metrics so we can alarm on application errors independently
+# of HTTP status codes (which only catch what the ALB sees).
+
+resource "aws_cloudwatch_log_metric_filter" "app_errors" {
+  for_each = { for k, v in var.applications : k => v if v.enabled }
+
+  name           = "${var.environment}-${each.key}-error-count"
+  log_group_name = "/ecs/${var.environment}-${each.key}"
+  pattern        = "{ $.level = \"error\" }"
+
+  metric_transformation {
+    name          = "ErrorCount"
+    namespace     = "Artemis/${var.environment}/${each.key}"
+    value         = "1"
+    default_value = "0"
+    unit          = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "app_error_rate" {
+  for_each = { for k, v in var.applications : k => v if v.enabled }
+
+  alarm_name          = "${var.environment}-${each.key}-app-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "ErrorCount"
+  namespace           = "Artemis/${var.environment}/${each.key}"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = var.environment == "production" ? 10 : 25
+  alarm_description   = "${each.key} logged more than ${var.environment == "production" ? 10 : 25} application errors in 2 minutes"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  tags = merge(local.common_tags, {
+    Severity    = "high"
+    Application = each.key
+    AlarmType   = "application"
+  })
+}
+
+# Log filter for auth-specific events: failed logins (brute-force detection)
+resource "aws_cloudwatch_log_metric_filter" "auth_failures" {
+  name           = "${var.environment}-auth-login-failures"
+  log_group_name = "/ecs/${var.environment}-auth"
+  pattern        = "{ $.message = \"login_failed\" }"
+
+  metric_transformation {
+    name          = "LoginFailureCount"
+    namespace     = "Artemis/${var.environment}/auth"
+    value         = "1"
+    default_value = "0"
+    unit          = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "auth_brute_force" {
+  alarm_name          = "${var.environment}-auth-brute-force"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "LoginFailureCount"
+  namespace           = "Artemis/${var.environment}/auth"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = var.environment == "production" ? 50 : 200
+  alarm_description   = "Possible brute-force: >50 failed logins in 1 minute"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  tags = merge(local.common_tags, {
+    Severity  = "critical"
+    AlarmType = "security"
+  })
+}
+
+# =============================================================================
+# ECS Task Stop Alarm — catches crash loops and OOM kills
+# =============================================================================
+
+resource "aws_cloudwatch_event_rule" "ecs_task_stopped" {
+  name        = "${var.environment}-ecs-task-stopped"
+  description = "Fires when an ECS task stops unexpectedly (non-zero exit or OOM)"
+
+  event_pattern = jsonencode({
+    source      = ["aws.ecs"]
+    detail-type = ["ECS Task State Change"]
+    detail = {
+      clusterArn    = [aws_ecs_cluster.main.arn]
+      lastStatus    = ["STOPPED"]
+      stoppedReason = [
+        { prefix = "Essential container in task exited" },
+        { prefix = "Task failed ELB health checks" },
+        { prefix = "OutOfMemoryError" },
+      ]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "ecs_task_stopped_sns" {
+  rule      = aws_cloudwatch_event_rule.ecs_task_stopped.name
+  target_id = "SendToSNS"
+  arn       = aws_sns_topic.alerts.arn
+
+  input_transformer {
+    input_paths = {
+      task    = "$.detail.taskDefinitionArn"
+      reason  = "$.detail.stoppedReason"
+      cluster = "$.detail.clusterArn"
+    }
+    input_template = "\"ECS Task STOPPED in ${var.environment}. Task: <task>. Reason: <reason>.\""
+  }
+}
+
+# Allow EventBridge to publish to SNS
+resource "aws_sns_topic_policy" "allow_eventbridge" {
+  arn = aws_sns_topic.alerts.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowEventBridge"
+      Effect    = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action    = "SNS:Publish"
+      Resource  = aws_sns_topic.alerts.arn
+    }]
+  })
+}
+
+# =============================================================================
+# Anomaly Detection — latency SLO tracking
+# =============================================================================
+# Alarms when response time deviates significantly from its learned baseline,
+# catching gradual degradation that static thresholds miss.
+
+resource "aws_cloudwatch_metric_alarm" "latency_anomaly" {
+  for_each = { for k, v in var.applications : k => v if v.enabled }
+
+  alarm_name          = "${var.environment}-${each.key}-latency-anomaly"
+  comparison_operator = "GreaterThanUpperThreshold"
+  evaluation_periods  = 3
+  threshold_metric_id = "e1"
+  alarm_description   = "Response time anomaly detected for ${each.key} (3-sigma deviation)"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  metric_query {
+    id          = "m1"
+    return_data = true
+    metric {
+      metric_name = "TargetResponseTime"
+      namespace   = "AWS/ApplicationELB"
+      period      = 300
+      stat        = "p95"
+      dimensions = {
+        LoadBalancer = aws_lb.main.arn_suffix
+        TargetGroup  = aws_lb_target_group.apps[each.key].arn_suffix
+      }
+    }
+  }
+
+  metric_query {
+    id          = "e1"
+    expression  = "ANOMALY_DETECTION_BAND(m1, 3)"
+    label       = "TargetResponseTime (expected)"
+    return_data = true
+  }
+
+  tags = merge(local.common_tags, {
+    Severity    = "medium"
+    Application = each.key
+    AlarmType   = "anomaly"
+  })
+}
+
+# =============================================================================
+# Composite Alarm — "Platform Critical" (single pager-worthy signal)
+# =============================================================================
+# Fires when auth OR artemis (the two services every client depends on)
+# has no healthy targets. This is the one alarm that pages you at 3am.
+
+resource "aws_cloudwatch_composite_alarm" "platform_critical" {
+  alarm_name        = "${var.environment}-platform-critical"
+  alarm_description = "Auth or Artemis platform hub has no healthy targets — immediate action required"
+
+  alarm_rule = "ALARM(\"${var.environment}-auth-no-healthy-targets\") OR ALARM(\"${var.environment}-artemis-no-healthy-targets\")"
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+
+  tags = merge(local.common_tags, {
+    Severity  = "critical"
+    AlarmType = "composite"
+  })
+}
+
+# =============================================================================
+# SLO Dashboard widget additions — availability per service
+# =============================================================================
+# Metric math alarm: availability = (requests - 5xx) / requests < 99.9%
+
+resource "aws_cloudwatch_metric_alarm" "availability_slo" {
+  for_each = { for k, v in var.applications : k => v if v.enabled }
+
+  alarm_name          = "${var.environment}-${each.key}-availability-slo"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 5
+  threshold           = 99.9
+  alarm_description   = "${each.key} availability dropped below 99.9% SLO"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  metric_query {
+    id          = "requests"
+    return_data = false
+    metric {
+      metric_name = "RequestCount"
+      namespace   = "AWS/ApplicationELB"
+      period      = 60
+      stat        = "Sum"
+      dimensions = {
+        LoadBalancer = aws_lb.main.arn_suffix
+        TargetGroup  = aws_lb_target_group.apps[each.key].arn_suffix
+      }
+    }
+  }
+
+  metric_query {
+    id          = "errors_5xx"
+    return_data = false
+    metric {
+      metric_name = "HTTPCode_Target_5XX_Count"
+      namespace   = "AWS/ApplicationELB"
+      period      = 60
+      stat        = "Sum"
+      dimensions = {
+        LoadBalancer = aws_lb.main.arn_suffix
+        TargetGroup  = aws_lb_target_group.apps[each.key].arn_suffix
+      }
+    }
+  }
+
+  metric_query {
+    id          = "availability"
+    expression  = "IF(requests > 0, ((requests - errors_5xx) / requests) * 100, 100)"
+    label       = "Availability %"
+    return_data = true
+  }
+
+  tags = merge(local.common_tags, {
+    Severity    = "high"
+    Application = each.key
+    AlarmType   = "slo"
+  })
+}

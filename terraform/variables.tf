@@ -170,6 +170,17 @@ variable "applications" {
       health_check_path = "/health"
       repository       = "rummel-tech/services"
     }
+    trip-planner = {
+      enabled          = true
+      port             = 8070
+      cpu              = 256
+      memory           = 512
+      desired_count    = 1
+      min_capacity     = 1
+      max_capacity     = 5
+      health_check_path = "/health"
+      repository       = "rummel-tech/services"
+    }
   }
 }
 
@@ -249,6 +260,22 @@ variable "frontend_certificate_arn" {
   description = "ARN of ACM certificate for frontend custom domains (must be in us-east-1)"
   type        = string
   default     = ""
+}
+
+# =============================================================================
+# WAF Configuration
+# =============================================================================
+
+variable "waf_blocked_countries" {
+  description = "List of ISO 3166-1 alpha-2 country codes to block at the WAF level. Leave empty to allow all countries. Example: [\"CN\", \"RU\"]"
+  type        = list(string)
+  default     = []
+}
+
+variable "waf_admin_ip_allowlist" {
+  description = "List of IPv4 CIDR ranges (e.g. [\"1.2.3.4/32\"]) that are unconditionally allowed through the WAF at priority 0, bypassing rate limits. Leave empty to disable the allowlist rule."
+  type        = list(string)
+  default     = []
 }
 
 # =============================================================================

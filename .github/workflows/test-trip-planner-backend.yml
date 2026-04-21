@@ -1,0 +1,124 @@
+name: Test Trip Planner Backend
+
+on:
+  repository_dispatch:
+    types: [test-trip-planner-backend]
+  workflow_dispatch:
+    inputs:
+      repo_ref:
+        description: 'Repository ref to test'
+        required: false
+        default: 'main'
+  push:
+    branches: [main]
+    paths:
+      - 'trip-planner/**'
+      - 'common/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'trip-planner/**'
+      - 'common/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  PYTHON_VERSION: '3.11'
+  WORKING_DIR: 'trip-planner'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout services repo
+        uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/services
+          ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
+          path: app-repo
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: 'app-repo/${{ env.WORKING_DIR }}/requirements.txt'
+
+      - name: Install dependencies
+        working-directory: app-repo
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ./common
+          pip install -r ${{ env.WORKING_DIR }}/requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
+
+      - name: Run tests with coverage
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        env:
+          ENVIRONMENT: development
+          ENABLE_METRICS: "false"
+          JWT_SECRET: test-secret
+        run: |
+          pytest tests/ \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=60 \
+            -v \
+            --tb=short \
+            --junitxml=test-results.xml
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-trip-planner
+          path: |
+            app-repo/${{ env.WORKING_DIR }}/coverage.xml
+            app-repo/${{ env.WORKING_DIR }}/test-results.xml
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Coverage summary on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: orgoro/coverage@v3.2
+        with:
+          coverageFile: app-repo/${{ env.WORKING_DIR }}/coverage.xml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          thresholdAll: 0.60
+          thresholdNew: 0.80
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout services repo
+        uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/services
+          ref: ${{ github.event.inputs.repo_ref || github.event.client_payload.ref || github.ref }}
+          path: app-repo
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install linting tools
+        run: pip install flake8 black isort
+
+      - name: Flake8
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics \
+            --exclude=.venv,__pycache__,.pytest_cache,migrations
+
+      - name: Black
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        run: black --check --diff .
+
+      - name: isort
+        working-directory: app-repo/${{ env.WORKING_DIR }}
+        run: isort --check-only --diff .

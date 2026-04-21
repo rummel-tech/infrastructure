@@ -1,11 +1,11 @@
 name: Run Database Migrations
 
-# Runs migrate_db.py for a service against a target environment.
+# Runs Alembic migrations for a service against a target environment.
 #
 # Implementation: launches a one-off ECS Fargate task using the service's
-# current production image with the command overridden to run the migration
-# script. This uses the same task definition (and therefore the same
-# DATABASE_URL secret) as the live service — no credentials handling needed.
+# current image with the command overridden to run `alembic upgrade head`.
+# This uses the same task definition (and therefore the same DATABASE_URL
+# secret) as the live service — no credentials handling needed.
 #
 # Usage:
 #   gh workflow run run-migrations.yml \
@@ -28,6 +28,7 @@ on:
           - vehicle-manager
           - education-planner
           - content-planner
+          - trip-planner
           - artemis
       environment:
         description: 'Target environment'
@@ -38,7 +39,7 @@ on:
           - production
         default: production
       dry_run:
-        description: 'Print SQL without executing (if supported by migrate_db.py)'
+        description: 'Show pending migrations without applying (alembic upgrade --sql)'
         required: false
         type: boolean
         default: false
@@ -95,11 +96,12 @@ jobs:
       - name: Determine migration command
         id: cmd
         run: |
-          # Build the override command. Pass --dry-run if requested.
+          # Use alembic for versioned migrations.
+          # --sql (dry-run) prints the SQL that would be executed without applying it.
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            CMD='["python", "migrate_db.py", "--dry-run"]'
+            CMD='["alembic", "upgrade", "--sql", "head"]'
           else
-            CMD='["python", "migrate_db.py"]'
+            CMD='["alembic", "upgrade", "head"]'
           fi
           echo "CMD=$CMD" >> $GITHUB_OUTPUT
 
@@ -180,8 +182,8 @@ jobs:
 
       - name: Summary
         run: |
-          DRY="${{ inputs.dry_run == 'true' && ' (dry run)' || '' }}"
-          echo "### Migration complete ✅${DRY}" >> $GITHUB_STEP_SUMMARY
+          DRY="${{ inputs.dry_run == 'true' && ' (dry run — SQL printed, not applied)' || '' }}"
+          echo "### Alembic Migration complete ✅${DRY}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY

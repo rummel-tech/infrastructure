@@ -68,6 +68,7 @@ jobs:
             --cov=. \
             --cov-report=term \
             --cov-report=xml \
+              --cov-fail-under=60 \
             -v \
             --tb=short \
             || echo "No tests found or tests failed"

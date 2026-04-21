@@ -42,6 +42,7 @@ on:
           - work-planner
           - education-planner
           - content-planner
+          - trip-planner
       environment:
         description: 'Target environment'
         required: true
@@ -103,6 +104,7 @@ jobs:
               work-planner) echo "APP_PORT=8040" >> $GITHUB_ENV ;;
               education-planner) echo "APP_PORT=8050" >> $GITHUB_ENV ;;
               content-planner) echo "APP_PORT=8060" >> $GITHUB_ENV ;;
+              trip-planner) echo "APP_PORT=8070" >> $GITHUB_ENV ;;
             esac
           else
             echo "APP_PORT=${{ inputs.port }}" >> $GITHUB_ENV
@@ -243,6 +245,89 @@ jobs:
           aws ecs register-task-definition \
             --cli-input-json file:///tmp/task-def.json \
             --region $AWS_REGION
+
+      - name: Run database migrations
+        run: |
+          # Skip services that don't use Alembic (e.g. artemis has no DB).
+          if [ ! -f "services-repo/${{ inputs.app_name }}/alembic.ini" ]; then
+            echo "No alembic.ini for ${{ inputs.app_name }} — skipping migrations."
+            exit 0
+          fi
+
+          # Pull network config (subnets + security groups) from the running service.
+          # If the service doesn't exist yet (first deploy), fall back to a Terraform
+          # output or skip — migrations can be run manually for brand-new services.
+          SVC_JSON=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION" \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' \
+            --output json 2>/dev/null || echo "{}")
+
+          SUBNETS=$(echo "$SVC_JSON" | python3 -c \
+            "import json,sys; d=json.load(sys.stdin); print(','.join(d.get('subnets',[])))" 2>/dev/null || echo "")
+          SG=$(echo "$SVC_JSON" | python3 -c \
+            "import json,sys; d=json.load(sys.stdin); print(','.join(d.get('securityGroups',[])))" 2>/dev/null || echo "")
+
+          if [ -z "$SUBNETS" ]; then
+            echo "::warning::Cannot determine network config — ECS service may not exist yet. Skipping auto-migration."
+            echo "Run migrations manually: gh workflow run run-migrations.yml -f app_name=${{ inputs.app_name }} -f environment=${{ inputs.environment }}"
+            exit 0
+          fi
+
+          OVERRIDES=$(printf \
+            '{"containerOverrides":[{"name":"%s","command":["alembic","upgrade","head"]}]}' \
+            "$CONTAINER_NAME")
+
+          echo "Starting migration task for ${{ inputs.app_name }} (${{ inputs.environment }})..."
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "${{ inputs.environment }}-${{ inputs.app_name }}" \
+            --launch-type FARGATE \
+            --network-configuration \
+              "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+            --overrides "$OVERRIDES" \
+            --region "$AWS_REGION" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "::error::Failed to start migration task."
+            exit 1
+          fi
+
+          echo "Migration task: $TASK_ARN"
+          echo "Waiting for completion..."
+          aws ecs wait tasks-stopped \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --region "$AWS_REGION"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --region "$AWS_REGION" \
+            --query "tasks[0].containers[?name=='$CONTAINER_NAME'].exitCode | [0]" \
+            --output text 2>/dev/null || echo "1")
+
+          STOP_REASON=$(aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --region "$AWS_REGION" \
+            --query "tasks[0].stoppedReason" \
+            --output text 2>/dev/null || echo "")
+
+          echo "Exit code: $EXIT_CODE"
+          [ -n "$STOP_REASON" ] && echo "Stop reason: $STOP_REASON"
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::Migration failed (exit $EXIT_CODE). Aborting deploy."
+            echo "View migration logs:"
+            echo "  aws logs tail /ecs/${{ inputs.environment }}-${{ inputs.app_name }} --follow --region $AWS_REGION"
+            exit 1
+          fi
+
+          echo "Migrations applied successfully."
 
       - name: Deploy to ECS
         run: |

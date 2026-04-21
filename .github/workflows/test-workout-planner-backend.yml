@@ -75,6 +75,7 @@ jobs:
             --cov=. \
             --cov-report=term \
             --cov-report=xml \
+              --cov-fail-under=60 \
             --cov-report=html \
             -v \
             --tb=short

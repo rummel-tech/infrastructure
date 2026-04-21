@@ -1,0 +1,107 @@
+name: Auto-Deploy to Staging
+
+# Automatically deploys changed services to staging after CI passes on main.
+# Only fires for pushes to main — PRs and develop never auto-deploy.
+
+on:
+  workflow_run:
+    workflows: ["CI - Test & Lint"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  # ── Guard: only proceed if CI passed ──────────────────────────────────────
+  check-ci:
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - name: Check CI result
+        id: check
+        run: |
+          if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+            echo "CI did not pass (conclusion: ${{ github.event.workflow_run.conclusion }}). Skipping deploy."
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+          else
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
+          fi
+
+  # ── Detect which services changed in this push ────────────────────────────
+  detect-changes:
+    needs: check-ci
+    if: needs.check-ci.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.changed.outputs.services }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: rummel-tech/services
+          ref: ${{ needs.check-ci.outputs.sha }}
+          fetch-depth: 2
+
+      - name: Detect changed services
+        id: changed
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          COMMON=$(echo "$CHANGED" | grep -q '^common/' && echo true || echo false)
+
+          SERVICES=()
+          for svc in auth artemis meal-planner home-manager vehicle-manager workout-planner work-planner education-planner content-planner trip-planner; do
+            if echo "$CHANGED" | grep -q "^${svc}/" || [[ "$COMMON" == "true" ]]; then
+              SERVICES+=("\"${svc}\"")
+            fi
+          done
+
+          if [ ${#SERVICES[@]} -eq 0 ]; then
+            echo "services=[]" >> $GITHUB_OUTPUT
+            echo "No backend service changes detected."
+          else
+            JOINED=$(IFS=,; echo "${SERVICES[*]}")
+            echo "services=[${JOINED}]" >> $GITHUB_OUTPUT
+            echo "Deploying: ${SERVICES[*]}"
+          fi
+
+  # ── Deploy each changed service to staging ────────────────────────────────
+  deploy:
+    needs: [check-ci, detect-changes]
+    if: needs.detect-changes.outputs.services != '[]' && needs.detect-changes.outputs.services != ''
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    uses: ./.github/workflows/deploy-backend.yml
+    with:
+      app_name: ${{ matrix.service }}
+      environment: staging
+      repo_ref: ${{ needs.check-ci.outputs.sha }}
+      port: ${{ matrix.service == 'auth' && 8090 || matrix.service == 'artemis' && 8080 || matrix.service == 'workout-planner' && 8000 || matrix.service == 'meal-planner' && 8010 || matrix.service == 'home-manager' && 8020 || matrix.service == 'vehicle-manager' && 8030 || matrix.service == 'work-planner' && 8040 || matrix.service == 'education-planner' && 8050 || matrix.service == 'content-planner' && 8060 || 8070 }}
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+  # ── Smoke test each deployed service ──────────────────────────────────────
+  smoke-test:
+    needs: [check-ci, detect-changes, deploy]
+    if: needs.deploy.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    uses: ./.github/workflows/smoke-test.yml
+    with:
+      app_name: ${{ matrix.service }}
+      environment: staging
+    secrets:
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
